@@ -116,6 +116,87 @@ struct jit_softmax_base_t : public jit_generator {
     size_t dst_axis_stride_;
     size_t diff_dst_axis_stride_;
 
+    PReg tail_opmask = p2;
+
+    void store(const XReg &addr, const ZReg &vmm, data_type_t dt,
+            bool tail = false) {
+        PReg opmask = P_ALL_ONE;
+        bool tail_mask_valid = false;
+        auto effective_addr = addr;
+        TReg src_vmm = vmm;
+
+        if (tail) {
+            if (dt == data_type::f32) {
+                if (axis_is_blocked_) {
+                    src_vmm = vzero;
+                    eor(vzero.d, vzero.d, vzero.d);
+                    mov(src_vmm.s, tail_opmask / T_m, vmm.s);
+                    effective_addr = addr;
+                } else {
+                    effective_addr = addr;
+                    tail_mask_valid = true;
+                }
+            } else { // int8 store instructions assume mask on register
+                tail_mask_valid = true;
+            }
+        }
+
+        if (tail_mask_valid) opmask = tail_opmask;
+
+        switch (dt) {
+            case data_type::f32:
+                st1w(src_vmm.s, opmask, ptr(effective_addr));
+                break;
+            case data_type::u8:
+                eor(vzero.d, vzero.d, vzero.d); // since vzero might be spoiled
+                saturate_f32(vmm, vzero, vsaturation_ubound, data_type::u8,
+                        P_ALL_ONE);
+                frinti(vmm.s, P_ALL_ONE / T_m, vmm.s);
+                fcvtzu(vmm.s, P_ALL_ONE / T_m, vmm.s);
+                smin(vmm.s, 127);
+                st1b(vmm.s, opmask, ptr(effective_addr));
+                // Need to restore data back to fp32 since we apply exp after
+                // storing and data should be fp32.
+                if (is_logsoftmax_) scvtf(vmm.s, opmask / T_m, vmm.s);
+                break;
+            case data_type::s8:
+                saturate_f32(vmm, vzero, vsaturation_ubound, data_type::s8,
+                        P_ALL_ONE);
+                frinti(vmm.s, opmask / T_m, vmm.s);
+                fcvtzs(vmm.s, opmask / T_m, vmm.s);
+                smin(vmm.s, 127);
+                smax(vmm.s, -128);
+                st1b(vmm.s, opmask, ptr(effective_addr));
+                // Need to restore data back to fp32 since we apply exp after
+                // storing and data should be fp32.
+                if (is_logsoftmax_) scvtf(vmm.s, opmask / T_m, vmm.s);
+                break;
+            default: assert(!"unsupported"); break;
+        }
+    };
+    void load(const TReg &vmm, const XReg &addr, data_type_t dt,
+            bool tail = false) {
+        PReg tmp_mask = P_ALL_ONE;
+        ZRegS effective_vmm = vmm.s;
+
+        if (tail) tmp_mask = tail_opmask;
+
+        switch (dt) {
+            case data_type::f32:
+                ld1w(effective_vmm, tmp_mask, ptr(addr));
+                break;
+            case data_type::u8:
+                ld1b(effective_vmm, tmp_mask / T_z, ptr(addr));
+                scvtf(effective_vmm, P_ALL_ONE / T_m, effective_vmm);
+                break;
+            case data_type::s8:
+                ld1sb(effective_vmm, tmp_mask / T_z, ptr(addr));
+                scvtf(effective_vmm, P_ALL_ONE / T_m, effective_vmm);
+                break;
+            default: assert(!"unsupported"); break;
+        }
+    };
+
     void compute_predefined_variables() {
         axis_simd_full_ = pd_->axis_size() / simd_w_;
         axis_simd_tail_ = pd_->axis_size() % simd_w_;
@@ -293,16 +374,201 @@ struct jit_softmax_base_t : public jit_generator {
             if (axis_simd_tail_) { body(1, true); }
         }
     }
+    void prepare_tail_mask() {
+        const int sw_tail = axis_simd_tail_;
+        PRegS p = tail_opmask.s;
+        switch (sw_tail) {
+            case 16: ptrue(p, VL16); break;
+            case 8: ptrue(p, VL8); break;
+            case 7: ptrue(p, VL7); break;
+            case 6: ptrue(p, VL6); break;
+            case 5: ptrue(p, VL5); break;
+            case 4: ptrue(p, VL4); break;
+            case 3: ptrue(p, VL3); break;
+            case 2: ptrue(p, VL2); break;
+            case 1: ptrue(p, VL1); break;
+            default:
+                index(vtmp.s, 1, 1);
+                cmple(p, P_ALL_ONE / T_z, vtmp.s, sw_tail);
+                break;
+        }
+    }
 
-    virtual void prepare_tail_mask() = 0;
-    virtual void get_horizontal_op(const TReg &v, const TReg &vtmp, op_t op)
-            = 0;
-    virtual void accumulate_vmax() = 0;
-    virtual void accumulate_vsum() = 0;
-    virtual void compute_dst() = 0;
-    virtual void initialization_hook() {}
-    virtual void accumulate_vsbr() {}
-    virtual void compute_diff_src() {}
+    void get_horizontal_op(const ZReg &v, const ZReg &vtmp, op_t op) {
+        mov(vtmp.d, v.d);
+        ext(vtmp.b, v.b, (isa == sve_512) ? 32 : 16);
+        perform_op(v, vtmp, op);
+
+        mov(vtmp.s, P_ALL_ONE / T_m, v.s);
+        mov(v_tmp0.s, P_ALL_ONE / T_m, v.s);
+        ext(v_tmp0.b, v.b, (isa == sve_512) ? 48 : 24);
+        ext(vtmp.b, v.b, (isa == sve_512) ? 16 : 32);
+        mov(vtmp.s, p_shuff0 / T_m, v_tmp0.s);
+        perform_op(v, vtmp, op);
+
+        if (isa == sve_512) {
+            uzp2(v_tmp0.d, v.d, v.d);
+            trn1(vtmp.d, v_tmp0.d, v.d);
+            perform_op(v, vtmp, op);
+        }
+
+        trn1(vtmp.s, v.s, v.s);
+        trn2(v_tmp0.s, v.s, v.s);
+        mov(vtmp.s, p_shuff1 / T_m, v_tmp0.s);
+        perform_op(v, vtmp, op);
+    }
+
+
+
+    void accumulate_vmax() {
+        // flush to -FLT_MAX before accumulation
+        mov(vmax.d, vneg_flt_max.d);
+
+        axis_loop([&](int unroll, bool tail = false) {
+            for (int i = 0; i < unroll; i++) {
+                TReg vreg_tmp_src = TReg(i + 1);
+                load(vreg_tmp_src, src_ptr(src_axis_stride_ * i),
+                        src_d_.data_type(), tail);
+                if (tail) {
+                    uni_fmax(vmax, vmax, vreg_tmp_src, tail_opmask);
+                } else {
+                    uni_fmax(vmax, vmax, vreg_tmp_src);
+                }
+            }
+        });
+
+        get_horizontal_op(vmax, vtmp = vsum, op_t::max);
+    }
+
+    void accumulate_vsum() {
+        // Initialize saturation vector register
+        if (utils::one_of(dst_d_.data_type(), data_type::u8, data_type::s8)) {
+            init_saturate_f32(vzero, vsaturation_ubound, reg_tmp,
+                    data_type::f32, dst_d_.data_type());
+        }
+
+        eor(vsum.d, vsum.d, vsum.d); // flush to zero before accumulation
+
+        axis_loop([&](int unroll, bool tail = false) {
+            for (int i = 0; i < unroll; i++) {
+                TReg vreg_tmp_src = TReg(i + 1);
+                load(vreg_tmp_src, src_ptr(src_axis_stride_ * i),
+                        src_d_.data_type(), tail);
+                fsub(vreg_tmp_src.s, vreg_tmp_src.s, vmax.s);
+                if (is_logsoftmax_) { // store before applying exp
+                    if (need_scratchpad_) {
+                        store(interim_ptr(interim_axis_stride_ * i),
+                                vreg_tmp_src, data_type::f32, tail);
+                    } else {
+                        store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
+                                dst_d_.data_type(), tail);
+                    }
+                }
+                exp_injector_->compute_vector(vreg_tmp_src.getIdx());
+                if (tail)
+                    fadd(vsum.s, tail_opmask / T_m, vreg_tmp_src.s);
+                else
+                    fadd(vsum.s, vsum.s, vreg_tmp_src.s);
+                if (is_softmax_) { // store after applying exp
+                    if (need_scratchpad_) {
+                        store(interim_ptr(interim_axis_stride_ * i),
+                                vreg_tmp_src, data_type::f32, tail);
+                    } else {
+                        store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
+                                dst_d_.data_type(), tail);
+                    }
+                }
+            }
+        });
+
+        get_horizontal_op(vsum, vtmp = vmax, op_t::sum);
+        if (is_softmax_) {
+            mov(v_tmp0.d, vsum.d);
+            mov(vsum.d, P_ALL_ONE, vone.d);
+            fdiv(vsum.s, P_ALL_ONE / T_m, v_tmp0.s);
+        }
+        if (is_logsoftmax_) log_injector_->compute_vector(vsum.getIdx());
+    }
+
+    void compute_dst() {
+        axis_loop([&](int unroll, bool tail = false) {
+            for (int i = 0; i < unroll; i++) {
+                ZReg vreg_tmp_src = ZReg(i + 1);
+                if (need_scratchpad_) {
+                    load(vreg_tmp_src, interim_ptr(interim_axis_stride_ * i),
+                            data_type::f32, tail);
+                } else {
+                    load(vreg_tmp_src, dst_ptr(dst_axis_stride_ * i),
+                            dst_d_.data_type(), tail);
+                }
+
+                if (is_softmax_) {
+                    fmul(vreg_tmp_src.s, vreg_tmp_src.s, vsum.s);
+                }
+                if (is_logsoftmax_) {
+                    fsub(vreg_tmp_src.s, vreg_tmp_src.s, vsum.s);
+                }
+
+                TReg vscale = vmax;
+                ldr(vscale, ptr(reg_src_scales));
+                fmul(vreg_tmp_src.s, vreg_tmp_src.s, vscale.s);
+                // Reserved spot for post-ops injector.
+                ldr(vscale, ptr(reg_dst_scales));
+                fmul(vreg_tmp_src.s, vreg_tmp_src.s, vscale.s);
+                store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
+                        dst_d_.data_type(), tail);
+            }
+        });
+    }
+
+    void accumulate_vsbr() {
+        eor(vsbr.d, vsbr.d, vsbr.d); // flush to zero before accumulation
+
+        axis_loop([&](int unroll, bool tail = false) {
+            for (int i = 0; i < unroll; i++) {
+                ZReg vreg_tmp_dst = ZReg(i * 2 + 1);
+                ZReg vreg_tmp_diff_dst = ZReg(i * 2 + 2);
+                load(vreg_tmp_diff_dst, diff_dst_ptr(diff_dst_axis_stride_ * i),
+                        diff_dst_d_.data_type(), tail);
+                if (is_softmax_) {
+                    load(vreg_tmp_dst, dst_ptr(dst_axis_stride_ * i),
+                            dst_d_.data_type(), tail);
+                    fmul(vreg_tmp_diff_dst.s, vreg_tmp_diff_dst.s,
+                            vreg_tmp_dst.s);
+                }
+                fadd(vsbr.s, vsbr.s, vreg_tmp_diff_dst.s);
+            }
+        });
+
+        get_horizontal_op(vsbr, vtmp = vmax, op_t::sum);
+    }
+
+    void compute_diff_src() {
+        axis_loop([&](int unroll, bool tail = false) {
+            for (int i = 0; i < unroll; i++) {
+                ZReg vreg_tmp_dst = ZReg(i * 2 + 1);
+                ZReg vreg_tmp_diff_dst = ZReg(i * 2 + 2);
+                load(vreg_tmp_dst, dst_ptr(dst_axis_stride_ * i),
+                        dst_d_.data_type(), tail);
+                load(vreg_tmp_diff_dst, diff_dst_ptr(diff_dst_axis_stride_ * i),
+                        diff_dst_d_.data_type(), tail);
+                if (is_softmax_) {
+                    fsub(vreg_tmp_diff_dst.s, vreg_tmp_diff_dst.s, vsbr.s);
+                    fmul(vreg_tmp_diff_dst.s, vreg_tmp_dst.s,
+                            vreg_tmp_diff_dst.s);
+                }
+                if (is_logsoftmax_) {
+                    exp_injector_->compute_vector(vreg_tmp_dst.getIdx());
+                    fmls(vreg_tmp_diff_dst.s, P_ALL_ONE / T_m, vreg_tmp_dst.s,
+                            vsbr.s);
+                }
+                store(diff_src_ptr(src_axis_stride_ * i), vreg_tmp_diff_dst,
+                        src_d_.data_type(), tail);
+            }
+        });
+    }
+
+    void initialization_hook() {}
 
     void forward() {
         accumulate_vmax();
@@ -383,563 +649,14 @@ struct jit_softmax_base_t : public jit_generator {
 };
 
 template <cpu_isa_t isa>
-struct jit_softmax_t;
+struct jit_softmax_t : public jit_softmax_base_t<isa> {
 
-template <>
-struct jit_softmax_t<sve_512> : public jit_softmax_base_t<sve_512> {
-    PReg tail_opmask = p2;
+    jit_softmax_t(const softmax_pd_t *pd) : jit_softmax_base_t<isa>(pd) {}
 
-    void store(const XReg &addr, const ZReg &vmm, data_type_t dt,
-            bool tail = false) {
-        PReg opmask = P_ALL_ONE;
-        bool tail_mask_valid = false;
-        auto effective_addr = addr;
-        TReg src_vmm = vmm;
-
-        if (tail) {
-            if (dt == data_type::f32) {
-                if (axis_is_blocked_) {
-                    src_vmm = vzero;
-                    eor(vzero.d, vzero.d, vzero.d);
-                    mov(src_vmm.s, tail_opmask / T_m, vmm.s);
-                    effective_addr = addr;
-                } else {
-                    effective_addr = addr;
-                    tail_mask_valid = true;
-                }
-            } else { // int8 store instructions assume mask on register
-                tail_mask_valid = true;
-            }
-        }
-
-        if (tail_mask_valid) opmask = tail_opmask;
-
-        switch (dt) {
-            case data_type::f32:
-                st1w(src_vmm.s, opmask, ptr(effective_addr));
-                break;
-            case data_type::u8:
-                eor(vzero.d, vzero.d, vzero.d); // since vzero might be spoiled
-                saturate_f32(vmm, vzero, vsaturation_ubound, data_type::u8,
-                        P_ALL_ONE);
-                frinti(vmm.s, P_ALL_ONE / T_m, vmm.s);
-                fcvtzu(vmm.s, P_ALL_ONE / T_m, vmm.s);
-                smin(vmm.s, 127);
-                st1b(vmm.s, opmask, ptr(effective_addr));
-                // Need to restore data back to fp32 since we apply exp after
-                // storing and data should be fp32.
-                if (is_logsoftmax_) scvtf(vmm.s, opmask / T_m, vmm.s);
-                break;
-            case data_type::s8:
-                saturate_f32(vmm, vzero, vsaturation_ubound, data_type::s8,
-                        P_ALL_ONE);
-                frinti(vmm.s, opmask / T_m, vmm.s);
-                fcvtzs(vmm.s, opmask / T_m, vmm.s);
-                smin(vmm.s, 127);
-                smax(vmm.s, -128);
-                st1b(vmm.s, opmask, ptr(effective_addr));
-                // Need to restore data back to fp32 since we apply exp after
-                // storing and data should be fp32.
-                if (is_logsoftmax_) scvtf(vmm.s, opmask / T_m, vmm.s);
-                break;
-            default: assert(!"unsupported"); break;
-        }
-    };
-
-    void load(const TReg &vmm, const XReg &addr, data_type_t dt,
-            bool tail = false) {
-        PReg tmp_mask = P_ALL_ONE;
-        ZRegS effective_vmm = vmm.s;
-
-        if (tail) tmp_mask = tail_opmask;
-
-        switch (dt) {
-            case data_type::f32:
-                ld1w(effective_vmm, tmp_mask, ptr(addr));
-                break;
-            case data_type::u8:
-                ld1b(effective_vmm, tmp_mask / T_z, ptr(addr));
-                scvtf(effective_vmm, P_ALL_ONE / T_m, effective_vmm);
-                break;
-            case data_type::s8:
-                ld1sb(effective_vmm, tmp_mask / T_z, ptr(addr));
-                scvtf(effective_vmm, P_ALL_ONE / T_m, effective_vmm);
-                break;
-            default: assert(!"unsupported"); break;
-        }
-    };
-
-    void prepare_tail_mask() override {
-        const int sw_tail = axis_simd_tail_;
-        PRegS p = tail_opmask.s;
-        switch (sw_tail) {
-            case 16: ptrue(p, VL16); break;
-            case 8: ptrue(p, VL8); break;
-            case 7: ptrue(p, VL7); break;
-            case 6: ptrue(p, VL6); break;
-            case 5: ptrue(p, VL5); break;
-            case 4: ptrue(p, VL4); break;
-            case 3: ptrue(p, VL3); break;
-            case 2: ptrue(p, VL2); break;
-            case 1: ptrue(p, VL1); break;
-            default:
-                index(vtmp.s, 1, 1);
-                cmple(p, P_ALL_ONE / T_z, vtmp.s, sw_tail);
-                break;
-        }
-    }
-
-    void get_horizontal_op(const ZReg &v, const ZReg &vtmp, op_t op) override {
-        mov(vtmp.d, v.d);
-        ext(vtmp.b, v.b, 32);
-        perform_op(v, vtmp, op);
-        mov(vtmp.s, P_ALL_ONE, v.s);
-        mov(v_tmp0.s, P_ALL_ONE, v.s);
-        ext(v_tmp0.b, v.b, 48);
-        ext(vtmp.b, v.b, 16);
-        mov(vtmp.d, p_shuff0 / T_m, v_tmp0.d);
-        perform_op(v, vtmp, op);
-        uzp2(v_tmp0.d, v.d, v.d);
-        trn1(vtmp.d, v_tmp0.d, v.d);
-        perform_op(v, vtmp, op);
-        trn1(vtmp.s, v.s, v.s);
-        trn2(v_tmp0.s, v.s, v.s);
-        mov(vtmp.s, p_shuff1 / T_m, v_tmp0.s);
-        perform_op(v, vtmp, op);
-    }
-
-    void accumulate_vmax() override {
-        // flush to -FLT_MAX before accumulation
-        mov(vmax.d, vneg_flt_max.d);
-
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                TReg vreg_tmp_src = TReg(i + 1);
-                load(vreg_tmp_src, src_ptr(src_axis_stride_ * i),
-                        src_d_.data_type(), tail);
-                if (tail) {
-                    uni_fmax(vmax, vmax, vreg_tmp_src, tail_opmask);
-                } else {
-                    uni_fmax(vmax, vmax, vreg_tmp_src);
-                }
-            }
-        });
-
-        get_horizontal_op(vmax, vtmp = vsum, op_t::max);
-    }
-
-    void accumulate_vsum() override {
-        // Initialize saturation vector register
-        if (utils::one_of(dst_d_.data_type(), data_type::u8, data_type::s8)) {
-            init_saturate_f32(vzero, vsaturation_ubound, reg_tmp,
-                    data_type::f32, dst_d_.data_type());
-        }
-
-        eor(vsum.d, vsum.d, vsum.d); // flush to zero before accumulation
-
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                TReg vreg_tmp_src = TReg(i + 1);
-                load(vreg_tmp_src, src_ptr(src_axis_stride_ * i),
-                        src_d_.data_type(), tail);
-                fsub(vreg_tmp_src.s, vreg_tmp_src.s, vmax.s);
-                if (is_logsoftmax_) { // store before applying exp
-                    if (need_scratchpad_) {
-                        store(interim_ptr(interim_axis_stride_ * i),
-                                vreg_tmp_src, data_type::f32, tail);
-                    } else {
-                        store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
-                                dst_d_.data_type(), tail);
-                    }
-                }
-                exp_injector_->compute_vector(vreg_tmp_src.getIdx());
-                if (tail)
-                    fadd(vsum.s, tail_opmask / T_m, vreg_tmp_src.s);
-                else
-                    fadd(vsum.s, vsum.s, vreg_tmp_src.s);
-                if (is_softmax_) { // store after applying exp
-                    if (need_scratchpad_) {
-                        store(interim_ptr(interim_axis_stride_ * i),
-                                vreg_tmp_src, data_type::f32, tail);
-                    } else {
-                        store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
-                                dst_d_.data_type(), tail);
-                    }
-                }
-            }
-        });
-
-        get_horizontal_op(vsum, vtmp = vmax, op_t::sum);
-        if (is_softmax_) {
-            mov(v_tmp0.d, vsum.d);
-            mov(vsum.d, P_ALL_ONE, vone.d);
-            fdiv(vsum.s, P_ALL_ONE / T_m, v_tmp0.s);
-        }
-        if (is_logsoftmax_) log_injector_->compute_vector(vsum.getIdx());
-    }
-
-    void compute_dst() override {
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                ZReg vreg_tmp_src = ZReg(i + 1);
-                if (need_scratchpad_) {
-                    load(vreg_tmp_src, interim_ptr(interim_axis_stride_ * i),
-                            data_type::f32, tail);
-                } else {
-                    load(vreg_tmp_src, dst_ptr(dst_axis_stride_ * i),
-                            dst_d_.data_type(), tail);
-                }
-
-                if (is_softmax_) {
-                    fmul(vreg_tmp_src.s, vreg_tmp_src.s, vsum.s);
-                }
-                if (is_logsoftmax_) {
-                    fsub(vreg_tmp_src.s, vreg_tmp_src.s, vsum.s);
-                }
-
-                TReg vscale = vmax;
-                ldr(vscale, ptr(reg_src_scales));
-                fmul(vreg_tmp_src.s, vreg_tmp_src.s, vscale.s);
-                // Reserved spot for post-ops injector.
-                ldr(vscale, ptr(reg_dst_scales));
-                fmul(vreg_tmp_src.s, vreg_tmp_src.s, vscale.s);
-                store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
-                        dst_d_.data_type(), tail);
-            }
-        });
-    }
-
-    void accumulate_vsbr() override {
-        eor(vsbr.d, vsbr.d, vsbr.d); // flush to zero before accumulation
-
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                ZReg vreg_tmp_dst = ZReg(i * 2 + 1);
-                ZReg vreg_tmp_diff_dst = ZReg(i * 2 + 2);
-                load(vreg_tmp_diff_dst, diff_dst_ptr(diff_dst_axis_stride_ * i),
-                        diff_dst_d_.data_type(), tail);
-                if (is_softmax_) {
-                    load(vreg_tmp_dst, dst_ptr(dst_axis_stride_ * i),
-                            dst_d_.data_type(), tail);
-                    fmul(vreg_tmp_diff_dst.s, vreg_tmp_diff_dst.s,
-                            vreg_tmp_dst.s);
-                }
-                fadd(vsbr.s, vsbr.s, vreg_tmp_diff_dst.s);
-            }
-        });
-
-        get_horizontal_op(vsbr, vtmp = vmax, op_t::sum);
-    }
-
-    void compute_diff_src() override {
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                ZReg vreg_tmp_dst = ZReg(i * 2 + 1);
-                ZReg vreg_tmp_diff_dst = ZReg(i * 2 + 2);
-                load(vreg_tmp_dst, dst_ptr(dst_axis_stride_ * i),
-                        dst_d_.data_type(), tail);
-                load(vreg_tmp_diff_dst, diff_dst_ptr(diff_dst_axis_stride_ * i),
-                        diff_dst_d_.data_type(), tail);
-                if (is_softmax_) {
-                    fsub(vreg_tmp_diff_dst.s, vreg_tmp_diff_dst.s, vsbr.s);
-                    fmul(vreg_tmp_diff_dst.s, vreg_tmp_dst.s,
-                            vreg_tmp_diff_dst.s);
-                }
-                if (is_logsoftmax_) {
-                    exp_injector_->compute_vector(vreg_tmp_dst.getIdx());
-                    fmls(vreg_tmp_diff_dst.s, P_ALL_ONE / T_m, vreg_tmp_dst.s,
-                            vsbr.s);
-                }
-                store(diff_src_ptr(src_axis_stride_ * i), vreg_tmp_diff_dst,
-                        src_d_.data_type(), tail);
-            }
-        });
-    }
-
-    void initialization_hook() override {}
-
-    jit_softmax_t(const softmax_pd_t *pd) : jit_softmax_base_t(pd) {}
-
-    void operator()(const call_params_t *p) override {
+    void operator()(const typename jit_softmax_base_t<isa>::call_params_t *p) {
         return jit_generator::operator()(p);
     }
-}; // namespace aarch64
 
-template <>
-struct jit_softmax_t<sve_256> : public jit_softmax_base_t<sve_256> {
-    PReg tail_opmask = p2;
-
-    void store(const XReg &addr, const ZReg &vmm, data_type_t dt,
-            bool tail = false) {
-        PReg opmask = P_ALL_ONE;
-        bool tail_mask_valid = false;
-        auto effective_addr = addr;
-        TReg src_vmm = vmm;
-
-        if (tail) {
-            if (dt == data_type::f32) {
-                if (axis_is_blocked_) {
-                    src_vmm = vzero;
-                    eor(vzero.d, vzero.d, vzero.d);
-                    mov(src_vmm.s, tail_opmask / T_m, vmm.s);
-                    effective_addr = addr;
-                } else {
-                    effective_addr = addr;
-                    tail_mask_valid = true;
-                }
-            } else { // int8 store instructions assume mask on register
-                tail_mask_valid = true;
-            }
-        }
-
-        if (tail_mask_valid) opmask = tail_opmask;
-
-        switch (dt) {
-            case data_type::f32:
-                st1w(src_vmm.s, opmask, ptr(effective_addr));
-                break;
-            case data_type::u8:
-                eor(vzero.d, vzero.d, vzero.d); // since vzero might be spoiled
-                saturate_f32(vmm, vzero, vsaturation_ubound, data_type::u8,
-                        P_ALL_ONE);
-                frinti(vmm.s, P_ALL_ONE / T_m, vmm.s);
-                fcvtzu(vmm.s, P_ALL_ONE / T_m, vmm.s);
-                smin(vmm.s, 127);
-                st1b(vmm.s, opmask, ptr(effective_addr));
-                // Need to restore data back to fp32 since we apply exp after
-                // storing and data should be fp32.
-                if (is_logsoftmax_) scvtf(vmm.s, opmask / T_m, vmm.s);
-                break;
-            case data_type::s8:
-                saturate_f32(vmm, vzero, vsaturation_ubound, data_type::s8,
-                        P_ALL_ONE);
-                frinti(vmm.s, opmask / T_m, vmm.s);
-                fcvtzs(vmm.s, opmask / T_m, vmm.s);
-                smin(vmm.s, 127);
-                smax(vmm.s, -128);
-                st1b(vmm.s, opmask, ptr(effective_addr));
-                // Need to restore data back to fp32 since we apply exp after
-                // storing and data should be fp32.
-                if (is_logsoftmax_) scvtf(vmm.s, opmask / T_m, vmm.s);
-                break;
-            default: assert(!"unsupported"); break;
-        }
-    };
-
-    void load(const TReg &vmm, const XReg &addr, data_type_t dt,
-            bool tail = false) {
-        PReg tmp_mask = P_ALL_ONE;
-        ZRegS effective_vmm = vmm.s;
-
-        if (tail) tmp_mask = tail_opmask;
-
-        switch (dt) {
-            case data_type::f32:
-                ld1w(effective_vmm, tmp_mask, ptr(addr));
-                break;
-            case data_type::u8:
-                ld1b(effective_vmm, tmp_mask / T_z, ptr(addr));
-                scvtf(effective_vmm, P_ALL_ONE / T_m, effective_vmm);
-                break;
-            case data_type::s8:
-                ld1sb(effective_vmm, tmp_mask / T_z, ptr(addr));
-                scvtf(effective_vmm, P_ALL_ONE / T_m, effective_vmm);
-                break;
-            default: assert(!"unsupported"); break;
-        }
-    };
-
-    void prepare_tail_mask() override {
-        const int sw_tail = axis_simd_tail_;
-        PRegS p = tail_opmask.s;
-        switch (sw_tail) {
-            case 16: ptrue(p, VL16); break;
-            case 8: ptrue(p, VL8); break;
-            case 7: ptrue(p, VL7); break;
-            case 6: ptrue(p, VL6); break;
-            case 5: ptrue(p, VL5); break;
-            case 4: ptrue(p, VL4); break;
-            case 3: ptrue(p, VL3); break;
-            case 2: ptrue(p, VL2); break;
-            case 1: ptrue(p, VL1); break;
-            default:
-                index(vtmp.s, 1, 1);
-                cmple(p, P_ALL_ONE / T_z, vtmp.s, sw_tail);
-                break;
-        }
-    }
-
-    void get_horizontal_op(const ZReg &v, const ZReg &vtmp, op_t op) override {
-        mov(vtmp.d, v.d);
-        ext(vtmp.b, v.b, 16);
-        perform_op(v, vtmp, op);
-        mov(vtmp.s, P_ALL_ONE / T_m, v.s);
-        mov(v_tmp0.s, P_ALL_ONE / T_m, v.s);
-        ext(v_tmp0.b, v.b, 24);
-        ext(vtmp.b, v.b, 32);
-        mov(vtmp.s, p_shuff0 / T_m, v_tmp0.s);
-        perform_op(v, vtmp, op);
-        trn1(vtmp.s, v.s, v.s);
-        trn2(v_tmp0.s, v.s, v.s);
-        mov(vtmp.s, p_shuff1 / T_m, v_tmp0.s);
-        perform_op(v, vtmp, op);
-    }
-
-    void accumulate_vmax() override {
-        // flush to -FLT_MAX before accumulation
-        mov(vmax.d, vneg_flt_max.d);
-
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                TReg vreg_tmp_src = TReg(i + 1);
-                load(vreg_tmp_src, src_ptr(src_axis_stride_ * i),
-                        src_d_.data_type(), tail);
-                if (tail) {
-                    uni_fmax(vmax, vmax, vreg_tmp_src, tail_opmask);
-                } else {
-                    uni_fmax(vmax, vmax, vreg_tmp_src);
-                }
-            }
-        });
-
-        get_horizontal_op(vmax, vtmp = vsum, op_t::max);
-    }
-
-    void accumulate_vsum() override {
-        // Initialize saturation vector register
-        if (utils::one_of(dst_d_.data_type(), data_type::u8, data_type::s8)) {
-            init_saturate_f32(vzero, vsaturation_ubound, reg_tmp,
-                    data_type::f32, dst_d_.data_type());
-        }
-
-        eor(vsum.d, vsum.d, vsum.d); // flush to zero before accumulation
-
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                TReg vreg_tmp_src = TReg(i + 1);
-                load(vreg_tmp_src, src_ptr(src_axis_stride_ * i),
-                        src_d_.data_type(), tail);
-                fsub(vreg_tmp_src.s, vreg_tmp_src.s, vmax.s);
-                if (is_logsoftmax_) { // store before applying exp
-                    if (need_scratchpad_) {
-                        store(interim_ptr(interim_axis_stride_ * i),
-                                vreg_tmp_src, data_type::f32, tail);
-                    } else {
-                        store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
-                                dst_d_.data_type(), tail);
-                    }
-                }
-                exp_injector_->compute_vector(vreg_tmp_src.getIdx());
-                if (tail)
-                    fadd(vsum.s, tail_opmask / T_m, vreg_tmp_src.s);
-                else
-                    fadd(vsum.s, vsum.s, vreg_tmp_src.s);
-                if (is_softmax_) { // store after applying exp
-                    if (need_scratchpad_) {
-                        store(interim_ptr(interim_axis_stride_ * i),
-                                vreg_tmp_src, data_type::f32, tail);
-                    } else {
-                        store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
-                                dst_d_.data_type(), tail);
-                    }
-                }
-            }
-        });
-
-        get_horizontal_op(vsum, vtmp = vmax, op_t::sum);
-        if (is_softmax_) {
-            mov(v_tmp0.d, vsum.d);
-            mov(vsum.d, P_ALL_ONE, vone.d);
-            fdiv(vsum.s, P_ALL_ONE / T_m, v_tmp0.s);
-        }
-        if (is_logsoftmax_) log_injector_->compute_vector(vsum.getIdx());
-    }
-
-    void compute_dst() override {
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                ZReg vreg_tmp_src = ZReg(i + 1);
-                if (need_scratchpad_) {
-                    load(vreg_tmp_src, interim_ptr(interim_axis_stride_ * i),
-                            data_type::f32, tail);
-                } else {
-                    load(vreg_tmp_src, dst_ptr(dst_axis_stride_ * i),
-                            dst_d_.data_type(), tail);
-                }
-
-                if (is_softmax_) {
-                    fmul(vreg_tmp_src.s, vreg_tmp_src.s, vsum.s);
-                }
-                if (is_logsoftmax_) {
-                    fsub(vreg_tmp_src.s, vreg_tmp_src.s, vsum.s);
-                }
-
-                TReg vscale = vmax;
-                ldr(vscale, ptr(reg_src_scales));
-                fmul(vreg_tmp_src.s, vreg_tmp_src.s, vscale.s);
-                // Reserved spot for post-ops injector.
-                ldr(vscale, ptr(reg_dst_scales));
-                fmul(vreg_tmp_src.s, vreg_tmp_src.s, vscale.s);
-                store(dst_ptr(dst_axis_stride_ * i), vreg_tmp_src,
-                        dst_d_.data_type(), tail);
-            }
-        });
-    }
-
-    void accumulate_vsbr() override {
-        eor(vsbr.d, vsbr.d, vsbr.d); // flush to zero before accumulation
-
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                ZReg vreg_tmp_dst = ZReg(i * 2 + 1);
-                ZReg vreg_tmp_diff_dst = ZReg(i * 2 + 2);
-                load(vreg_tmp_diff_dst, diff_dst_ptr(diff_dst_axis_stride_ * i),
-                        diff_dst_d_.data_type(), tail);
-                if (is_softmax_) {
-                    load(vreg_tmp_dst, dst_ptr(dst_axis_stride_ * i),
-                            dst_d_.data_type(), tail);
-                    fmul(vreg_tmp_diff_dst.s, vreg_tmp_diff_dst.s,
-                            vreg_tmp_dst.s);
-                }
-                fadd(vsbr.s, vsbr.s, vreg_tmp_diff_dst.s);
-            }
-        });
-
-        get_horizontal_op(vsbr, vtmp = vmax, op_t::sum);
-    }
-
-    void compute_diff_src() override {
-        axis_loop([&](int unroll, bool tail = false) {
-            for (int i = 0; i < unroll; i++) {
-                ZReg vreg_tmp_dst = ZReg(i * 2 + 1);
-                ZReg vreg_tmp_diff_dst = ZReg(i * 2 + 2);
-                load(vreg_tmp_dst, dst_ptr(dst_axis_stride_ * i),
-                        dst_d_.data_type(), tail);
-                load(vreg_tmp_diff_dst, diff_dst_ptr(diff_dst_axis_stride_ * i),
-                        diff_dst_d_.data_type(), tail);
-                if (is_softmax_) {
-                    fsub(vreg_tmp_diff_dst.s, vreg_tmp_diff_dst.s, vsbr.s);
-                    fmul(vreg_tmp_diff_dst.s, vreg_tmp_dst.s,
-                            vreg_tmp_diff_dst.s);
-                }
-                if (is_logsoftmax_) {
-                    exp_injector_->compute_vector(vreg_tmp_dst.getIdx());
-                    fmls(vreg_tmp_diff_dst.s, P_ALL_ONE / T_m, vreg_tmp_dst.s,
-                            vsbr.s);
-                }
-                store(diff_src_ptr(src_axis_stride_ * i), vreg_tmp_diff_dst,
-                        src_d_.data_type(), tail);
-            }
-        });
-    }
-
-    void initialization_hook() override {}
-
-    jit_softmax_t(const softmax_pd_t *pd) : jit_softmax_base_t(pd) {}
-
-    void operator()(const call_params_t *p) override {
-        return jit_generator::operator()(p);
-    }
 }; // namespace aarch64
 
 template <cpu_isa_t isa>
