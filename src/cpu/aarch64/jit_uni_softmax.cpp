@@ -418,8 +418,6 @@ struct jit_softmax_base_t : public jit_generator {
         perform_op(v, vtmp, op);
     }
 
-
-
     void accumulate_vmax() {
         // flush to -FLT_MAX before accumulation
         mov(vmax.d, vneg_flt_max.d);
