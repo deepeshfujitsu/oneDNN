@@ -67,14 +67,18 @@ const char *state2str(res_state_t state) {
     return "STATE_UNDEF";
 }
 
-namespace skip_reason {
-std::string case_not_supported("Case not supported");
-std::string data_type_not_supported("Data type not supported");
-std::string invalid_case("Invalid case");
-std::string not_enough_ram("Not enough RAM");
-std::string skip_impl_hit("Skip-impl option hit");
-std::string skip_start("Skip-start option hit");
-} // namespace skip_reason
+const char *skip_reason2str(skip_reason_t skip_reason) {
+#define CASE(x) \
+    if (skip_reason == (x)) return STRINGIFY(x)
+    CASE(CASE_NOT_SUPPORTED);
+    CASE(DATA_TYPE_NOT_SUPPORTED);
+    CASE(INVALID_CASE);
+    CASE(NOT_ENOUGH_RAM);
+    CASE(SKIP_IMPL_HIT);
+    CASE(SKIP_START);
+#undef CASE
+    return "SKIP_UNKNOWN";
+}
 
 dir_t str2dir(const char *str) {
 #define CASE(x) \
@@ -105,22 +109,15 @@ void parse_result(res_t &res, const char *pstr) {
                 BENCHDNN_PRINT(0, "%d:%s __REPRO: %s\n", bs.tests, state, pstr);
             bs.passed++;
             break;
-        case FAILED: {
+        case FAILED:
             bs.failed++;
-            std::string error_stat;
-            if (res.errors > 0) {
-                error_stat = " (errors:" + std::to_string(res.errors)
-                        + " total:" + std::to_string(res.total) + ")";
-            }
-
-            std::string reason;
-            if (!res.reason.empty()) { reason = " (" + res.reason + ")"; }
-            BENCHDNN_PRINT(0, "%d:%s%s%s __REPRO: %s\n", bs.tests, state,
-                    reason.c_str(), error_stat.c_str(), pstr);
-        } break;
+            BENCHDNN_PRINT(0, "%d:%s (errors:%lu total:%lu) __REPRO: %s\n",
+                    bs.tests, state, (unsigned long)res.errors,
+                    (unsigned long)res.total, pstr);
+            break;
         case SKIPPED:
             BENCHDNN_PRINT(0, "%d:%s (%s) __REPRO: %s\n", bs.tests, state,
-                    res.reason.c_str(), pstr);
+                    skip_reason2str(res.reason), pstr);
             bs.skipped++;
             break;
         case UNIMPLEMENTED:
@@ -340,7 +337,7 @@ bool maybe_skip(const std::string &impl_str) {
 bool skip_start(res_t *res, int idx) {
     if (idx < test_start) {
         res->state = SKIPPED;
-        res->reason = skip_reason::skip_start;
+        res->reason = SKIP_START;
         return true;
     }
     return false;
@@ -656,64 +653,4 @@ void print_dhw(bool &print_d, bool &print_h, bool &print_w, int ndims,
     print_h = ndims == 4 || (ndims == 5 && (!cubic_shape || canonical));
     print_w = ndims == 3 || (ndims == 5 && (!cubic_shape || canonical))
             || (ndims == 4 && (!square_shape || canonical));
-}
-
-// Copied from utils::getenv.
-// An underlined unified implementation for getting env var value.
-int getenv(const char *name, char *buffer, int buffer_size) {
-    if (name == nullptr || buffer_size < 0
-            || (buffer == nullptr && buffer_size > 0))
-        return INT_MIN;
-
-    int result = 0;
-    int term_zero_idx = 0;
-    size_t value_length = 0;
-
-#ifdef _WIN32
-    value_length = GetEnvironmentVariable(name, buffer, buffer_size);
-#else
-    const char *value = ::getenv(name);
-    value_length = value == nullptr ? 0 : strlen(value);
-#endif
-
-    if (value_length > INT_MAX)
-        result = INT_MIN;
-    else {
-        int int_value_length = (int)value_length;
-        if (int_value_length >= buffer_size) {
-            result = -int_value_length;
-        } else {
-            term_zero_idx = int_value_length;
-            result = int_value_length;
-#ifndef _WIN32
-            if (value) strncpy(buffer, value, buffer_size - 1);
-#endif
-        }
-    }
-
-    if (buffer != nullptr) buffer[term_zero_idx] = '\0';
-    return result;
-}
-
-// Copied from utils::getenv_int_user.
-// Collects an integer value from an env var.
-int benchdnn_getenv_int(const char *name, int default_value) {
-    int value = default_value;
-    // # of digits in the longest 32-bit signed int + sign + terminating null
-    const int len = 12;
-    char value_str[len];
-    if (getenv(name, value_str, len) > 0) { value = atoi(value_str); }
-    return value;
-}
-
-// Copied from utils::getenv_string_user.
-// Collects a string lower case value from an env var.
-std::string benchdnn_getenv_string(const char *name) {
-    // Random number to fit possible string input.
-    std::string value;
-    const int len = 128;
-    char value_str[len];
-    if (getenv(name, value_str, len) > 0) { value = value_str; }
-    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
-    return value;
 }

@@ -651,13 +651,6 @@ void compute_blocking_heuristic_amx(const brgemm_matmul_conf_t &bgmmc,
     int iter = 0;
     const int runtime_M_chunk = bgmmc.lda_big_pow2() ? 2 : 4;
     const int runtime_N_chunk = 2;
-
-    // Disable skip configuration due to regressions for some cases.
-    const bool disable_skip_config = bgmmc.M == 4
-            && utils::one_of(true, bgmmc.N == 4096 && bgmmc.K == 4096,
-                    bgmmc.N == 11008 && bgmmc.K == 4096,
-                    bgmmc.N == 4096 && bgmmc.K == 11008);
-
     for (int nthr_k = 1; nthr_k <= max_nthr_k; nthr_k++) {
         int nthr_bmn = bgmmc.nthr / nthr_k;
 
@@ -724,7 +717,7 @@ void compute_blocking_heuristic_amx(const brgemm_matmul_conf_t &bgmmc,
 
             bool skip_config = work_amount < nthr_bmn * 3
                     && work_amount % nthr_bmn != 0 && max_nthr_k == 1;
-            if (skip_config && !disable_skip_config) continue;
+            if (skip_config) continue;
 
             if (cur_score > bst_score) {
                 best_blocking = current_blocking;
@@ -1189,7 +1182,6 @@ status_t init_brgemm_matmul_conf(cpu_isa_t isa, brgemm_matmul_conf_t &bgmmc,
     }
     bgmmc.is_bf32 = bm_conf_utils.is_bf32();
     bgmmc.is_bf16_with_int_wei = bm_conf_utils.is_bf16_with_int_wei();
-    bgmmc.with_wei_decompression = bm_conf_utils.with_weights_decompression();
 
     // Make BRGeMM compute MatMul as if it were in bfloat16, while down-convert
     // happens during copy-buffer computations
@@ -1217,18 +1209,10 @@ status_t init_brgemm_matmul_conf(cpu_isa_t isa, brgemm_matmul_conf_t &bgmmc,
     bgmmc.with_scales = !src_scales.has_default_values()
             || !wei_scales.has_default_values();
     if (bgmmc.with_scales) {
-        const auto wei_qmask_N = 1 << (bgmmc.ndims - 1);
-        const auto wei_qmask_K = 1 << (bgmmc.ndims - 2);
-        bgmmc.is_oscale_per_k = wei_scales.mask_ & wei_qmask_K;
-        bgmmc.is_oscale_per_n = wei_scales.mask_ & wei_qmask_N;
-        bgmmc.apply_scales_in_buffer_b = bgmmc.is_oscale_per_k
-                && bgmmc.with_wei_decompression && bgmmc.N * bgmmc.K != 1;
+        bgmmc.is_oscale_per_n = wei_scales.mask_ == 1 << (bgmmc.ndims - 1);
 
         // only common and per-oc-channel scales are supported
-        // only per-ic-channel scales is supprted with weight decompression
-        VCONDCHECK_BG(wei_scales.mask_ == 0 || bgmmc.is_oscale_per_n
-                        || IMPLICATION(bgmmc.is_oscale_per_k,
-                                bgmmc.with_wei_decompression),
+        VCONDCHECK_BG(wei_scales.mask_ == 0 || bgmmc.is_oscale_per_n,
                 VERBOSE_UNSUPPORTED_SCALES_CFG);
     }
 
@@ -1251,8 +1235,7 @@ status_t init_brgemm_matmul_conf(cpu_isa_t isa, brgemm_matmul_conf_t &bgmmc,
     bgmmc.dst_zp_type = get_zp_type(attr, DNNL_ARG_DST);
 
     VCONDCHECK_BG(
-            IMPLICATION(!(bm_conf_utils.is_int8()
-                                || bm_conf_utils.with_weights_decompression()),
+            IMPLICATION(!bm_conf_utils.is_int8(),
                     everyone_is(brgemm_broadcast_t::none, bgmmc.src_zp_type,
                             bgmmc.wei_zp_type, bgmmc.dst_zp_type)),
             VERBOSE_UNSUPPORTED_ZP_CFG);
@@ -1321,9 +1304,6 @@ status_t init_brgemm_matmul_conf(cpu_isa_t isa, brgemm_matmul_conf_t &bgmmc,
     bgmmc.transposed_B = bm_conf_utils.check_is_transposed(bgmmc.wei_tag)
             || bgmmc.wei_tag == adbc;
     bgmmc.use_buffer_b = bm_conf_utils.use_buffer_b();
-    bgmmc.req_transpose_scales = bgmmc.apply_scales_in_buffer_b
-            && bgmmc.is_oscale_per_k && bgmmc.is_oscale_per_n
-            && bgmmc.transposed_B;
 
     const bool transposed_A = bm_conf_utils.check_is_transposed(bgmmc.src_tag);
     // if M == 1 we can still treat formally transposed A as plain
@@ -1528,52 +1508,6 @@ status_t init_brgemm_matmul_conf(cpu_isa_t isa, brgemm_matmul_conf_t &bgmmc,
     // case therefore there is no fallback for it.
     is_small_shapes = is_small_shapes && !bgmmc.packed_sparse_weights;
     VCONDCHECK_BG(!is_small_shapes, VERBOSE_SMALL_SHAPES);
-
-    return status::success;
-}
-
-status_t init_conf(brgemm_matmul_conf_t &conf, dim_t batch, dim_t K, dim_t N,
-        dim_t n_blk, data_type_t in_type, data_type_t out_type,
-        format_tag_t in_tag) {
-    if (n_blk <= 0) return status::invalid_arguments;
-
-    const auto vnni_granularity = data_type_vnni_granularity(out_type);
-    if (vnni_granularity <= 0) return status::invalid_arguments;
-
-    const bool is_f16 = utils::one_of(data_type::f16, in_type, out_type);
-    const bool is_bf16_with_int_wei = out_type == data_type::bf16
-            && utils::one_of(in_type, data_type::s8, data_type::u8);
-    const bool with_wei_decompression = in_type != out_type
-            && utils::one_of(in_type, data_type::s8, data_type::u8);
-
-    conf.blocked_B = !utils::one_of(in_tag, ab, abc);
-    conf.is_bf16_with_int_wei = is_bf16_with_int_wei;
-    conf.with_wei_decompression = with_wei_decompression;
-    conf.orig_wei_dt = in_type;
-    conf.wei_tag = in_tag;
-    conf.batch = batch;
-    conf.K = K;
-    conf.N = N;
-    conf.wei_n_blk = conf.N_blk = conf.LDB = n_blk;
-    conf.N_tail = conf.N % conf.N_blk;
-    conf.K_blk = 16 * vnni_granularity;
-    conf.K_tail = conf.K % conf.K_blk;
-    conf.src_dt = conf.wei_dt = out_type;
-    conf.a_dt_sz = conf.tr_a_dt_sz = types::data_type_size(conf.src_dt);
-    conf.b_dt_sz = types::data_type_size(in_type);
-    conf.tr_b_dt_sz = types::data_type_size(conf.wei_dt);
-    conf.copy_B_wei_stride = conf.N * conf.b_dt_sz;
-    conf.transposed_B = false;
-    conf.s8s8_comp_b_str = utils::rnd_up(conf.N, conf.wei_n_blk);
-    conf.s8s8_comp_n_str = conf.wei_n_blk;
-    conf.isa = is_f16 ? avx512_core_fp16 : avx512_core;
-    // The following members are different from the upper level `init_conf()`
-    // call from the reorder implementation due to lacking a memory descriptor
-    // to tip on compensation.
-    // TODO: re-consider an interface change to enable these members.
-    conf.s8s8_compensation_required = false;
-    conf.src_zp_type = brgemm_broadcast_t::none;
-    conf.has_zero_point_a = false;
 
     return status::success;
 }

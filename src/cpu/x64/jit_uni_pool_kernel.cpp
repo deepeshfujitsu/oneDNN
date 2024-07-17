@@ -607,8 +607,7 @@ bool jit_uni_pool_kernel<isa>::post_ops_ok(jit_pool_conf_t &jpp,
         for (const auto &entry : entries) {
             if (entry.is_eltwise()) {
                 const auto alg = entry.eltwise.alg;
-                jpp.with_eltwise = eltwise_injector::is_supported(
-                        isa, alg, data_type::f32);
+                jpp.with_eltwise = eltwise_injector::is_supported(isa, alg);
             } else if (entry.is_binary()) {
                 const bool is_bf16_ok = IMPLICATION(
                         entry.binary.src1_desc.data_type == data_type::bf16,

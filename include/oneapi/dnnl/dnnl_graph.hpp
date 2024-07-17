@@ -14,9 +14,6 @@
 * limitations under the License.
 *******************************************************************************/
 
-/// @file
-/// Graph C++ API
-
 #ifndef ONEAPI_DNNL_DNNL_GRAPH_HPP
 #define ONEAPI_DNNL_DNNL_GRAPH_HPP
 
@@ -32,13 +29,10 @@
 /// @addtogroup dnnl_api
 /// @{
 
-namespace dnnl {
-
 /// @addtogroup dnnl_graph_api Graph API
-/// oneDNN Graph API
 /// @{
 
-/// oneDNN Graph namespace
+namespace dnnl {
 namespace graph {
 
 /// @cond DO_NOT_DOCUMENT_THIS
@@ -124,6 +118,7 @@ using req = typename std::enable_if<B, bool>::type;
 
 /// @addtogroup dnnl_graph_api_status Status
 /// Definitions of status values returned by the library functions.
+///
 /// @{
 
 /// Status values returned by the library functions.
@@ -152,7 +147,7 @@ enum class status {
     invalid_data_type = dnnl_invalid_data_type,
 };
 
-/// @} dnnl_graph_api_status
+/// @} dnnl_api_status
 
 /// @addtogroup dnnl_graph_api_allocator Allocator
 ///
@@ -949,9 +944,6 @@ public:
         /// Specifies a weights_format of an op. The value can be "OIX", "XIO",
         /// "IOX", or "XOI". Different operations may support different values.
         weights_format = dnnl_graph_op_attr_weights_format,
-
-        /// Specifies the end of all above exteral attributes for check.
-        end = dnnl_graph_op_attr_end,
     };
 
     /// Constructs an op object with an unique ID, an operation kind, and a name
@@ -1030,12 +1022,12 @@ public:
 
     /// Sets the attribute according to the name and type (int64_t).
     ///
-    /// @tparam Type_i Attribute's type.
+    /// @tparam Type Attribute's type.
     /// @param name Attribute's name.
     /// @param value The attribute's value.
     /// @returns The Op self.
-    template <typename Type_i, req<std::is_same<Type_i, int64_t>::value> = true>
-    op &set_attr(attr name, const Type_i &value) {
+    template <typename Type, req<std::is_same<Type, int64_t>::value> = true>
+    op &set_attr(attr name, const Type &value) {
         dnnl_graph_op_attr_t attr = convert_to_c(name);
         error::wrap_c_api(dnnl_graph_op_set_attr_s64(get(), attr, &value, 1),
                 "could not set attribute to the op");
@@ -1044,12 +1036,12 @@ public:
 
     /// Sets the attribute according to the name and type (float).
     ///
-    /// @tparam Type_f Attribute's type.
+    /// @tparam Type Attribute's type.
     /// @param name Attribute's name.
     /// @param value The attribute's value.
     /// @returns The Op self.
-    template <typename Type_f, req<std::is_same<Type_f, float>::value> = true>
-    op &set_attr(attr name, const Type_f &value) {
+    template <typename Type, req<std::is_same<Type, float>::value> = true>
+    op &set_attr(attr name, const Type &value) {
         dnnl_graph_op_attr_t attr = convert_to_c(name);
         error::wrap_c_api(dnnl_graph_op_set_attr_f32(get(), attr, &value, 1),
                 "could not set attribute to the op");
@@ -1058,12 +1050,12 @@ public:
 
     /// Sets the attribute according to the name and type (bool).
     ///
-    /// @tparam Type_b Attribute's type.
+    /// @tparam Type Attribute's type.
     /// @param name Attribute's name.
     /// @param value The attribute's value.
     /// @returns The Op self.
-    template <typename Type_b, req<std::is_same<Type_b, bool>::value> = true>
-    op &set_attr(attr name, const Type_b &value) {
+    template <typename Type, req<std::is_same<Type, bool>::value> = true>
+    op &set_attr(attr name, const Type &value) {
         dnnl_graph_op_attr_t attr = convert_to_c(name);
         const uint8_t val = value;
         error::wrap_c_api(dnnl_graph_op_set_attr_bool(get(), attr, &val, 1),
@@ -1073,13 +1065,12 @@ public:
 
     /// Sets the attribute according to the name and type (string).
     ///
-    /// @tparam Type_s Attribute's type.
+    /// @tparam Type Attribute's type.
     /// @param name Attribute's name.
     /// @param value The attribute's value.
     /// @returns The Op self.
-    template <typename Type_s,
-            req<std::is_same<Type_s, std::string>::value> = true>
-    op &set_attr(attr name, const Type_s &value) {
+    template <typename Type, req<std::is_same<Type, std::string>::value> = true>
+    op &set_attr(attr name, const Type &value) {
         dnnl_graph_op_attr_t attr = convert_to_c(name);
         error::wrap_c_api(dnnl_graph_op_set_attr_str(
                                   get(), attr, value.c_str(), value.size()),
@@ -1090,13 +1081,13 @@ public:
     /// Sets the attribute according to the name and type
     /// (std::vector<int64_t>).
     ///
-    /// @tparam Type_is Attribute's type.
+    /// @tparam Type Attribute's type.
     /// @param name Attribute's name.
     /// @param value The attribute's value.
     /// @returns The Op self.
-    template <typename Type_is,
-            req<std::is_same<Type_is, std::vector<int64_t>>::value> = true>
-    op &set_attr(attr name, const Type_is &value) {
+    template <typename Type,
+            req<std::is_same<Type, std::vector<int64_t>>::value> = true>
+    op &set_attr(attr name, const Type &value) {
         dnnl_graph_op_attr_t attr = convert_to_c(name);
         error::wrap_c_api(dnnl_graph_op_set_attr_s64(
                                   get(), attr, value.data(), value.size()),
@@ -1106,13 +1097,13 @@ public:
 
     /// Sets the attribute according to the name and type (std::vector<float>).
     ///
-    /// @tparam Type_fs Attribute's type.
+    /// @tparam Type Attribute's type.
     /// @param name Attribute's name.
     /// @param value The attribute's value.
     /// @returns The Op self.
-    template <typename Type_fs,
-            req<std::is_same<Type_fs, std::vector<float>>::value> = true>
-    op &set_attr(attr name, const Type_fs &value) {
+    template <typename Type,
+            req<std::is_same<Type, std::vector<float>>::value> = true>
+    op &set_attr(attr name, const Type &value) {
         dnnl_graph_op_attr_t attr = convert_to_c(name);
         error::wrap_c_api(dnnl_graph_op_set_attr_f32(
                                   get(), attr, value.data(), value.size()),
@@ -1549,12 +1540,9 @@ inline size_t get_constant_tensor_cache_capacity(engine::kind kind) {
     return size;
 }
 
-/// @} dnnl_graph_api_constant_tensor_cache
+/// @} dnnl_graph_constant_tensor_cache
 
 } // namespace graph
-
-/// @} dnnl_graph_api
-
 } // namespace dnnl
 
 /// @cond DO_NOT_DOCUMENT_THIS
@@ -1570,6 +1558,8 @@ namespace dnnl = ::dnnl;
 } // namespace oneapi
 
 /// @endcond
+
+/// @} dnnl_graph_api
 
 /// @} dnnl_api
 

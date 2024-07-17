@@ -1,6 +1,6 @@
 /*******************************************************************************
 * Copyright 2020-2023 Intel Corporation
-* Copyright 2023 FUJITSU LIMITED
+* Copyright 2024 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -28,8 +28,6 @@ namespace aarch64 {
 
 // The type defines organization of batch of matrices
 typedef enum {
-    // Undefined brgemm batch kind
-    brgemm_batch_kind_undef = 0,
     // A and B arrays of pointers
     brgemm_addr = 1,
     // Base address and array of offsets from base address.
@@ -254,7 +252,7 @@ struct brgemm_t {
     bool is_int8 = false;
     bool is_bf16 = false, is_bf16_emu = false;
     bool is_f16 = false;
-
+    
     bool is_f32 = false;
     bool is_bf32 = false;
 
@@ -274,6 +272,7 @@ struct brgemm_t {
 
     static constexpr int MAX_VPAD = 100;
 
+
     const primitive_attr_t *attr = nullptr;
     const memory_desc_t *dst_md = nullptr;
 
@@ -281,6 +280,10 @@ struct brgemm_t {
         assert(layout != brgemm_layout_undef);
         return layout == brgemm_row_major;
     }
+
+    
+
+
 
     int get_wsp_buffer_size() const noexcept {
         int sz = 0;

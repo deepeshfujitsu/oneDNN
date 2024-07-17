@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2020-2024 Intel Corporation
+ * Copyright 2020-2023 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,9 +30,6 @@ extern "C" {
 
 #include "oneapi/dnnl/dnnl_common_types.h"
 /// @endcond
-
-/// @addtogroup dnnl_api
-/// @{
 
 /// @addtogroup dnnl_graph_api
 /// @{
@@ -165,7 +162,7 @@ typedef struct dnnl_graph_graph *dnnl_graph_graph_t;
 /// A constant graph handle.
 typedef const struct dnnl_graph_graph *const_dnnl_graph_graph_t;
 
-/// @} dnnl_graph_api_graph
+/// @}
 
 /// @addtogroup dnnl_graph_api_op
 /// @{
@@ -376,9 +373,6 @@ typedef enum {
     /// Specifies a weights_format of an op. The value can be "OIX", "XIO",
     /// "IOX", or "XOI". Different operations may support different values.
     dnnl_graph_op_attr_weights_format,
-
-    /// Specifies the end of all above exteral attributes for check.
-    dnnl_graph_op_attr_end = 0xFF,
 } dnnl_graph_op_attr_t;
 
 /// An opaque structure to describe an operation.
@@ -461,8 +455,6 @@ typedef const struct dnnl_graph_tensor *const_dnnl_graph_tensor_t;
 /// @} dnnl_graph_api_tensor
 
 /// @} dnnl_graph_api
-
-/// @} dnnl_api
 
 #ifdef __cplusplus
 }

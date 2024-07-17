@@ -124,8 +124,8 @@ set(DNNL_ENABLE_PRIMITIVE "ALL" CACHE STRING
     - <PRIMITIVE_NAME>. Includes only the selected primitive to be enabled.
       Possible values are: BATCH_NORMALIZATION, BINARY, CONCAT, CONVOLUTION,
       DECONVOLUTION, ELTWISE, INNER_PRODUCT, LAYER_NORMALIZATION, LRN, MATMUL,
-      POOLING, PRELU, REDUCTION, REORDER, RESAMPLING, RNN, SDPA, SHUFFLE,
-      SOFTMAX, SUM.
+      POOLING, PRELU, REDUCTION, REORDER, RESAMPLING, RNN, SHUFFLE, SOFTMAX,
+      SUM.
     - <PRIMITIVE_NAME>;<PRIMITIVE_NAME>;... Includes only selected primitives to
       be enabled at build time. This is treated as CMake string, thus, semicolon
       is a mandatory delimiter between names. This is the way to specify several
@@ -195,11 +195,6 @@ option(DNNL_EXPERIMENTAL
 
 option(DNNL_EXPERIMENTAL_SPARSE
     "Enable experimental functionality for sparse domain. This option works
-    independetly from DNNL_EXPERIMENTAL."
-    OFF) # disabled by default
-
-option(DNNL_EXPERIMENTAL_UKERNEL
-    "Enable experimental functionality for ukernels. This option works
     independetly from DNNL_EXPERIMENTAL."
     OFF) # disabled by default
 
@@ -274,15 +269,10 @@ if(NOT "${DNNL_GPU_RUNTIME}" MATCHES "^(OCL|NONE|DPCPP|SYCL)$")
     message(FATAL_ERROR "Unsupported GPU runtime: ${DNNL_GPU_RUNTIME}")
 endif()
 
-set(DNNL_GPU_VENDOR "NONE" CACHE STRING
-    "When DNNL_GPU_RUNTIME is not NONE DNNL_GPU_VENDOR specifies target GPU
-    vendor for GPU engines. Can be INTEL (default), NVIDIA or AMD.")
-
-if(NOT DNNL_GPU_RUNTIME STREQUAL "NONE" AND DNNL_GPU_VENDOR STREQUAL "NONE")
-    set(DNNL_GPU_VENDOR "INTEL")
-endif()
-
-if(NOT "${DNNL_GPU_VENDOR}" MATCHES "^(NONE|INTEL|NVIDIA|AMD)$")
+set(DNNL_GPU_VENDOR "INTEL" CACHE STRING
+    "specifies target GPU vendor for GPU engines.
+    Can be INTEL (default) or NVIDIA.")
+if(NOT "${DNNL_GPU_VENDOR}" MATCHES "^(INTEL|NVIDIA|AMD)$")
     message(FATAL_ERROR "Unsupported GPU vendor: ${DNNL_GPU_VENDOR}")
 endif()
 

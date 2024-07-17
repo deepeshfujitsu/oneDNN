@@ -209,8 +209,7 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
     skip_unimplemented_prelu_po(prb->attr, res, dnnl_softmax);
 
     if (prb->attr.post_ops.find(attr_t::post_ops_t::kind_t::SUM) != -1) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
+        res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
         return;
     }
 }
@@ -227,19 +226,19 @@ void setup_cmp(compare::compare_t &cmp, const prb_t *prb, data_kind_t kind,
         const args_t &ref_args) {
     const auto trh_dt = (prb->dir & FLAG_FWD) ? prb->ddt : prb->sdt;
     const bool is_flt_or_dbl = trh_dt == dnnl_f32 || trh_dt == dnnl_f64;
+    const bool is_strict_acc
+            = prb->attr.acc_mode == dnnl_accumulation_mode_strict;
     const float trh_coeff_log = prb->alg == LOGSOFTMAX ? 5 : 1;
     const float trh_coeff_f32 = is_flt_or_dbl ? 10.f : 1.f;
     const float trh_coeff_bwd = (prb->dir & FLAG_FWD) ? 1.f : 4.f;
     const float trh_f32 = trh_coeff_log * trh_coeff_bwd * trh_coeff_f32
             * epsilon_dt(trh_dt);
-#if DNNL_AARCH64_USE_ACL || defined(DNNL_SYCL_HIP)
+#if DNNL_AARCH64 || defined(DNNL_SYCL_HIP)
     // MIOpen and ACL softmax accumulate in F16, but oneDNN now expects accumulation in
     // F32, this partially reverts 6727bbe8. For more information on ACL softmax, see
     // https://github.com/oneapi-src/oneDNN/issues/1819
     const float trh = trh_f32;
 #else
-    const bool is_strict_acc
-            = prb->attr.acc_mode == dnnl_accumulation_mode_strict;
     // Relaxed fp16 computation can get an ulp difference with f32 ref values.
     const float trh = is_flt_or_dbl || (trh_dt == dnnl_f16 && !is_strict_acc)
             ? trh_f32

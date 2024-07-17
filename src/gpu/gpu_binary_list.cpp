@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2021-2024 Intel Corporation
+* Copyright 2021-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -16,20 +16,9 @@
 
 #include "gpu/gpu_impl_list.hpp"
 
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_INTEL
-#include "gpu/intel/ocl/gen9_binary.hpp"
-#include "gpu/intel/ocl/multi_po_reorder_binary.hpp"
-#include "gpu/intel/ocl/ref_binary.hpp"
-#endif
-
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_NVIDIA
-#include "gpu/nvidia/cudnn_binary.hpp"
-#include "gpu/sycl/ref_binary.hpp"
-#endif
-
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_AMD
-#include "gpu/amd/miopen_binary.hpp"
-#endif
+#include "gpu/ocl/gen9_binary.hpp"
+#include "gpu/ocl/multi_po_reorder_binary.hpp"
+#include "gpu/ocl/ref_binary.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -39,12 +28,9 @@ namespace {
 
 // clang-format off
 constexpr impl_list_item_t impl_list[] = REG_BINARY_P({
-        GPU_INSTANCE_INTEL(intel::ocl::multi_po_reorder_binary)
-        GPU_INSTANCE_INTEL(intel::ocl::gen9_binary_t)
-        GPU_INSTANCE_INTEL(intel::ocl::ref_binary_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_binary_t)
-        GPU_INSTANCE_AMD(amd::miopen_binary_t)
-        GPU_INSTANCE_GENERIC_SYCL(sycl::ref_binary_t)
+        INSTANCE(ocl::multi_po_reorder_binary)
+        INSTANCE(ocl::gen9_binary_t)
+        INSTANCE(ocl::ref_binary_t)
         nullptr,
 });
 // clang-format on

@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2019-2024 Intel Corporation
+* Copyright 2019-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@
 
 #include "common/c_types_map.hpp"
 #include "common/gemm_types.hpp"
-#include "common/sdpa_types.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -140,8 +139,6 @@ struct convolution_desc_t {
     dims_t padding[2];
     // The accumulator data type. Initialized automatically.
     data_type_t accum_data_type;
-    // For internal use only. To mark conv is used for deconv.
-    bool use_inversion;
 };
 
 // A descriptor of a deconvolution operation.
@@ -617,7 +614,6 @@ struct op_desc_t {
         resampling_desc_t resampling;
         zero_pad_desc_t zero_pad;
         reduction_desc_t reduction;
-        sdpa_desc_t sdpa;
     };
 
 #define DECL_CTOR_AND_CONVERTERS(c_type) \
@@ -650,7 +646,6 @@ struct op_desc_t {
     DECL_CTOR_AND_CONVERTERS(resampling_desc_t);
     DECL_CTOR_AND_CONVERTERS(zero_pad_desc_t);
     DECL_CTOR_AND_CONVERTERS(reduction_desc_t);
-    DECL_CTOR_AND_CONVERTERS(sdpa_desc_t);
 
     // concat_desc_t and sum_desc_t have data members which have non-trivial
     // special member functions hence the default destructor is implicitly

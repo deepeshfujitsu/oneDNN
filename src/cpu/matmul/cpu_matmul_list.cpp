@@ -1,7 +1,7 @@
 /*******************************************************************************
-* Copyright 2019-2024 Intel Corporation
+* Copyright 2019-2023 Intel Corporation
 * Copyright 2024 FUJITSU LIMITED
-* Copyright 2021-2024 Arm Ltd. and affiliates
+* Copyright 2021 Arm Ltd. and affiliates
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -33,8 +33,11 @@ using namespace dnnl::impl::cpu::x64;
 #elif DNNL_AARCH64
 #include "cpu/aarch64/matmul/brgemm_matmul.hpp"
 #ifdef DNNL_AARCH64_USE_ACL
-#include "cpu/aarch64/matmul/acl_lowp_matmul.hpp"
+#elif DNNL_AARCH64
+#include "cpu/aarch64/matmul/brgemm_matmul.hpp"
+#ifdef DNNL_AARCH64_USE_ACL
 #include "cpu/aarch64/matmul/acl_matmul.hpp"
+#endif
 #endif
 using namespace dnnl::impl::cpu::aarch64::matmul;
 using namespace dnnl::impl::cpu::aarch64;
@@ -73,10 +76,10 @@ using namespace dnnl::impl::cpu::matmul;
 // clang-format off
 constexpr impl_list_item_t impl_list[] = REG_MATMUL_P({
 
-        CPU_INSTANCE_AARCH64(brgemm_matmul_t<sve_512>)        
-        CPU_INSTANCE_AARCH64_ACL(acl_lowp_matmul_t)
-        CPU_INSTANCE_AARCH64_ACL(acl_matmul_t) 
-        CPU_INSTANCE_AARCH64(brgemm_matmul_t<sve_256>)       
+        CPU_INSTANCE_AARCH64(brgemm_matmul_t<sve_512>)
+
+        CPU_INSTANCE_AARCH64(brgemm_matmul_t<sve_512>)
+        CPU_INSTANCE_AARCH64_ACL(acl_matmul_t)
         CPU_INSTANCE_AMX(brgemm_matmul_t<avx512_core_amx_fp16>)
         CPU_INSTANCE_AMX(brgemm_matmul_t<avx512_core_amx>)
         CPU_INSTANCE_AVX512(brgemm_matmul_t<avx512_core_fp16>)
@@ -85,6 +88,7 @@ constexpr impl_list_item_t impl_list[] = REG_MATMUL_P({
         CPU_INSTANCE_AVX512(brgemm_matmul_t<avx512_core>)
         CPU_INSTANCE_AVX2(brgemm_matmul_t<avx2_vnni_2>)
         CPU_INSTANCE_AVX2(brgemm_matmul_t<avx2_vnni>)
+        CPU_INSTANCE_AARCH64(brgemm_matmul_t<sve_256>)
         CPU_INSTANCE(gemm_f32_matmul_t)
         CPU_INSTANCE(gemm_bf16_matmul_t<f32>)
         CPU_INSTANCE(gemm_bf16_matmul_t<bf16>)

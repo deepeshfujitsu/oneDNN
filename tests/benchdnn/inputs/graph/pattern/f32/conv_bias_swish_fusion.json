@@ -26,8 +26,8 @@
         "pads_end": {
           "type": "s64[]",
           "value": [
-            0,
-            0
+            -1,
+            -1
           ]
         },
         "pads_begin": {

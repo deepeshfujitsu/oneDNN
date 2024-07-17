@@ -1,5 +1,6 @@
 /*******************************************************************************
 * Copyright 2016-2024 Intel Corporation
+* Copyright 2020-2024 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -404,8 +405,10 @@ typedef enum {
     dnnl_AcB16a4b,
     dnnl_Acb4a,
     dnnl_Acb8a,
+    dnnl_aCBd8b8c,
     dnnl_aCBd16b16c,
     dnnl_aCBd16c16b,
+    dnnl_aCBde8b8c,
     dnnl_aCBde16b16c,
     dnnl_aCBde16c16b,
     dnnl_Acdb16a,
@@ -419,14 +422,18 @@ typedef enum {
     dnnl_Acdeb4a,
     dnnl_Acdeb8a,
     dnnl_Adcb16a,
+    dnnl_BAc8a8b,
     dnnl_BAc16a16b,
     dnnl_BAc16b16a,
+    dnnl_BAcd8a8b,
     dnnl_BAcd16a16b,
     dnnl_BAcd16b16a,
     dnnl_aCBd4c8b8c4b,
     dnnl_aCBde4c8b8c4b,
     dnnl_aCBdef4c8b8c4b,
+    dnnl_BAcde8a8b,
     dnnl_BAcde16a16b,
+    dnnl_aCBdef8b8c,
     dnnl_aCBdef16b16c,
     dnnl_ABc16b32a,
     dnnl_ABc16b64a,
@@ -1032,9 +1039,6 @@ typedef enum {
     dnnl_aCB8b16c,
     dnnl_BA8a8b,
     dnnl_aCB8b8c,
-    dnnl_bcad,
-    dnnl_cabd,
-    dnnl_dabc,
 
     /// Just a sentinel, not real memory format tag. Must be changed after new
     /// format tag is added.
@@ -1255,6 +1259,7 @@ typedef enum {
     dnnl_OI8i8o = dnnl_AB8b8a,
 
     // weights, 3D
+    dnnl_IOw8o8i = dnnl_BAc8a8b,
     dnnl_IOw16o16i = dnnl_BAc16a16b,
     dnnl_IOw16i16o = dnnl_BAc16b16a,
     dnnl_OIw16i16o = dnnl_ABc16b16a,
@@ -1325,6 +1330,7 @@ typedef enum {
 
     // weights, 4D
     dnnl_IOhw16i16o = dnnl_BAcd16b16a,
+    dnnl_IOhw8o8i = dnnl_BAcd8a8b,
     dnnl_IOhw16o16i = dnnl_BAcd16a16b,
     dnnl_Ohwi16o = dnnl_Acdb16a,
     dnnl_OhwI16o2i = dnnl_AcdB16a2b,
@@ -1457,6 +1463,7 @@ typedef enum {
     dnnl_OIdhw8o4i = dnnl_ABcde8a4b,
     dnnl_IOdhw16i16o = dnnl_BAcde16b16a,
     dnnl_OIdhw4o8i8o4i = dnnl_ABcde4a8b8a4b,
+    dnnl_IOdhw8o8i = dnnl_BAcde8a8b,
     dnnl_IOdhw16o16i = dnnl_BAcde16a16b,
     dnnl_OIdhw16o16i2o = dnnl_ABcde16a16b2a,
     dnnl_OIdhw8i32o = dnnl_ABcde8b32a,
@@ -1470,6 +1477,7 @@ typedef enum {
     dnnl_Goiw16g = dnnl_Abcd16a,
     dnnl_Goiw8g = dnnl_Abcd8a,
     dnnl_Goiw4g = dnnl_Abcd4a,
+    dnnl_gIOw8o8i = dnnl_aCBd8b8c,
     dnnl_gIOw16o16i = dnnl_aCBd16b16c,
     dnnl_gIOw16i16o = dnnl_aCBd16c16b,
     dnnl_gOIw16i16o = dnnl_aBCd16c16b,
@@ -1515,6 +1523,7 @@ typedef enum {
 
     // weights w/ groups, 4D
     dnnl_gIOhw16i16o = dnnl_aCBde16c16b,
+    dnnl_gIOhw8o8i = dnnl_aCBde8b8c,
     dnnl_gIOhw16o16i = dnnl_aCBde16b16c,
     dnnl_gOhwi16o = dnnl_aBdec16b,
     dnnl_gOhwI16o2i = dnnl_aBdeC16b2c,
@@ -1582,6 +1591,7 @@ typedef enum {
 
     // weights w/ groups, 6D
     dnnl_gIOdhw16i16o = dnnl_aCBdef16c16b,
+    dnnl_gIOdhw8o8i = dnnl_aCBdef8b8c,
     dnnl_gIOdhw16o16i = dnnl_aCBdef16b16c,
     dnnl_gOdhwi16o = dnnl_aBdefc16b,
     dnnl_gOdhwI16o2i = dnnl_aBdefC16b2c,
@@ -2436,8 +2446,6 @@ typedef struct dnnl_primitive *dnnl_primitive_t;
 /// A constant primitive handle.
 typedef const struct dnnl_primitive *const_dnnl_primitive_t;
 
-/// Undefined argument.
-#define DNNL_ARG_UNDEF 0
 /// Source argument #0.
 #define DNNL_ARG_SRC_0 1
 /// A special mnemonic for source argument for primitives that have a

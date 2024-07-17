@@ -17,7 +17,6 @@
 #ifndef GRAPH_BACKEND_DNNL_PATTERNS_DATA_TYPE_CHECK_PASS_HPP
 #define GRAPH_BACKEND_DNNL_PATTERNS_DATA_TYPE_CHECK_PASS_HPP
 
-#include "graph/backend/dnnl/kernels/quantize.hpp"
 #include "graph/backend/dnnl/patterns/pattern_matcher_pass.hpp"
 #include "graph/backend/dnnl/platform.hpp"
 #include "graph/backend/fake/pattern_utils.hpp"
@@ -32,98 +31,6 @@ namespace dnnl_impl {
 namespace pattern {
 
 namespace {
-
-platform::dir_t get_op_dir(const std::shared_ptr<op_t> &aop) {
-    using namespace dnnl::impl::graph::op_kind;
-    using namespace dnnl::impl::graph::dnnl_impl::platform;
-
-    const auto &op_kind = aop->get_kind();
-    const auto &num_inputs = aop->num_inputs();
-    const auto &num_outputs = aop->num_outputs();
-
-    dir_t dir = dir_t::FLAG_FWD;
-    switch (op_kind) {
-        // BatchNorm
-        case BatchNormForwardTraining: dir = dir_t::FWD_D; break;
-        case BatchNormInference: dir = dir_t::FWD_I; break;
-        case BatchNormTrainingBackward:
-            dir = num_outputs == 1 ? dir_t::BWD_D : dir_t::BWD_DW;
-            break;
-        // Convolution
-        case Convolution:
-            dir = num_inputs > 2 ? dir_t::FWD_B : dir_t::FWD_I;
-            break;
-        case ConvolutionBackwardData: dir = dir_t::BWD_D; break;
-        case ConvolutionBackwardWeights: dir = dir_t::BWD_W; break;
-        // ConvTranspose
-        case ConvTranspose:
-            dir = num_inputs > 2 ? dir_t::FWD_B : dir_t::FWD_I;
-            break;
-        case ConvTransposeBackwardData: dir = dir_t::BWD_D; break;
-        case ConvTransposeBackwardWeights: dir = dir_t::BWD_W; break;
-        // Eltwise
-        case Abs:
-        case Clamp:
-        case Elu:
-        case Exp:
-        case GELU:
-        case HardSigmoid:
-        case HardSwish:
-        case LeakyReLU:
-        case Log:
-        case Mish:
-        case Pow:
-        case Reciprocal:
-        case ReLU:
-        case Round:
-        case Sigmoid:
-        case SoftPlus:
-        case Sqrt:
-        case Square:
-        case SquaredDifference:
-        case Tanh: dir = dir_t::FWD_D; break;
-        case AbsBackward:
-        case ClampBackward:
-        case EluBackward:
-        case GELUBackward:
-        case HardSigmoidBackward:
-        case HardSwishBackward:
-        case MishBackward:
-        case ReLUBackward:
-        case SigmoidBackward:
-        case SoftPlusBackward:
-        case SqrtBackward:
-        case TanhBackward: dir = dir_t::BWD_D; break;
-        // LayerNorm
-        case LayerNorm:
-            // Outputs: SRC, MEAN( optional ), VAR( optional )
-            dir = num_outputs == 1 ? dir_t::FWD_I : dir_t::FWD_D;
-            break;
-        case LayerNormBackward: dir = dir_t::BWD_DW; break;
-        // Pool
-        case MaxPool:
-        case AvgPool: dir = dir_t::FWD_I; break;
-        case MaxPoolBackward:
-        case AvgPoolBackward: dir = dir_t::BWD_D; break;
-        // PReLU
-        case PReLU: dir = dir_t::FWD_D; break;
-        case PReLUBackward: dir = dir_t::BWD_DW; break;
-        // Resampling
-        case Interpolate: dir = dir_t::FWD_D; break;
-        case InterpolateBackward: dir = dir_t::BWD_D; break;
-        // Softmax
-        case SoftMax:
-        case LogSoftmax: dir = dir_t::FWD_D; break;
-        case SoftMaxBackward:
-        case LogSoftmaxBackward: dir = dir_t::BWD_D; break;
-        // Other ops lack of propagation kind, which are always considered as
-        // forward, including Binary, Concat, Matmul, Reduction and Reorder.
-        default: dir = dir_t::FLAG_FWD; break;
-    }
-
-    return dir;
-}
-
 bool is_reorder_type(op_kind_t op_kind) {
     using namespace dnnl::impl::graph::op_kind;
     static const std::unordered_set<int> reorder_ops {Reorder, Quantize,
@@ -131,7 +38,6 @@ bool is_reorder_type(op_kind_t op_kind) {
 
     return (reorder_ops.find(op_kind) != reorder_ops.end());
 }
-
 } // namespace
 
 /*!
@@ -151,27 +57,19 @@ public:
 
     // the criteria of pass execution
     impl::status_t run(graph_t &agraph) override {
-        using namespace dnnl::impl::graph::dnnl_impl::platform;
-
         // check if current pattern pass can be run on current graph
         engine_kind_t graph_engine_kind = agraph.get_engine_kind();
         if (get_engine_kind() != engine_kind::any_engine
                 && get_engine_kind() != graph_engine_kind)
             return impl::status::success;
 
-        std::unordered_map<int, std::vector<data_type_t>> unsupported_dt;
-        for (const std::shared_ptr<op_t> &aop : agraph.get_ops()) {
-            dir_t dir = get_op_dir(aop);
-            if (unsupported_dt.find(dir) == unsupported_dt.end()) {
-                unsupported_dt.emplace(dir, std::vector<data_type_t> {});
-                for (const auto &dt : dt_to_check_) {
-                    bool has_dtype_support = platform::get_dtype_support_status(
-                            graph_engine_kind, dt, dir);
-                    if (!has_dtype_support)
-                        unsupported_dt.at(dir).emplace_back(dt);
-                }
-            }
+        std::vector<data_type_t> unsupported_dt;
+        for (const auto &dt : dt_to_check_) {
+            bool has_dtype_support
+                    = platform::get_dtype_support_status(graph_engine_kind, dt);
+            if (!has_dtype_support) unsupported_dt.emplace_back(dt);
         }
+        if (unsupported_dt.empty()) return impl::status::success;
 
         std::vector<op_t *> matched_op_list;
         std::vector<std::vector<op_t *>> reorder_fusion_list;
@@ -182,22 +80,15 @@ public:
         // e.g. int8-bf16 patterns such as dequant->tc->matmul->tc->quant.
 
         for (const std::shared_ptr<op_t> &aop : agraph.get_ops()) {
+            const auto &op_kind = aop->get_kind();
 
             bool meet_unsupported_dt {false};
             bool meet_reorder {false};
 
-            dir_t dir = get_op_dir(aop);
-            const auto &op_kind = aop->get_kind();
-
-            if (unsupported_dt.find(dir) == unsupported_dt.end()) {
-                return impl::status::unimplemented;
-            }
-            const auto &dt_with_dir = unsupported_dt.at(dir);
-
             for (size_t i = 0; i < aop->num_inputs(); ++i) {
                 const logical_tensor_t &iport
                         = aop->get_input_value(i)->get_logical_tensor();
-                if (std::any_of(dt_with_dir.begin(), dt_with_dir.end(),
+                if (std::any_of(unsupported_dt.begin(), unsupported_dt.end(),
                             [&iport](data_type_t dt) {
                                 return dt == iport.data_type;
                             })) {
@@ -214,8 +105,8 @@ public:
                 for (size_t i = 0; i < aop->num_outputs(); ++i) {
                     const logical_tensor_t &oport
                             = aop->get_output_value(i)->get_logical_tensor();
-                    if (std::any_of(dt_with_dir.begin(), dt_with_dir.end(),
-                                [&oport](data_type_t dt) {
+                    if (std::any_of(unsupported_dt.begin(),
+                                unsupported_dt.end(), [&oport](data_type_t dt) {
                                     return dt == oport.data_type;
                                 })) {
                         if (is_reorder_type(op_kind)) {
@@ -241,8 +132,7 @@ public:
         if (!reorder_fusion_list.empty()) {
             pattern_utils_t dnnl_pu;
             const auto quantize_kernel_creater = []() -> kernel_ptr {
-                return std::make_shared<
-                        dnnl::impl::graph::dnnl_impl::quantize_dequantize_t>();
+                return std::make_shared<quantize_dequantize_t>();
             };
             dnnl_pu.init_partition(agraph, reorder_fusion_list,
                     quantize_kernel_creater,

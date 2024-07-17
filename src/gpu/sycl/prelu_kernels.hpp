@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2023-2024 Intel Corporation
+* Copyright 2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
 #include "gpu/sycl/sycl_post_ops.hpp"
 #include "gpu/sycl/sycl_primitive_conf.hpp"
 #include "gpu/sycl/sycl_q10n.hpp"
-#include "xpu/sycl/types.hpp"
+#include "gpu/sycl/sycl_types.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -42,9 +42,8 @@ struct prelu_fwd_kernel_vec_t {
     static constexpr int vec_len = 8;
 
     prelu_fwd_kernel_vec_t(const sycl_prelu_conf_t &conf,
-            xpu::sycl::in_memory_arg_t &data,
-            xpu::sycl::in_memory_arg_t &weights,
-            xpu::sycl::out_memory_arg_t &dst)
+            sycl_in_memory_arg_t &data, sycl_in_memory_arg_t &weights,
+            sycl_out_memory_arg_t &dst)
         : conf_(conf), data_(data), weights_(weights), dst_(dst) {}
 
     void operator()(::sycl::nd_item<1> item) const {
@@ -114,15 +113,15 @@ struct prelu_fwd_kernel_vec_t {
     }
 
 private:
-    const xpu::sycl::md_t &data_md() const { return conf_.data_md; }
-    const xpu::sycl::md_t &weights_md() const { return conf_.weights_md; }
-    const xpu::sycl::md_t &dst_md() const { return conf_.dst_md; }
+    const sycl_md_t &data_md() const { return conf_.data_md; }
+    const sycl_md_t &weights_md() const { return conf_.weights_md; }
+    const sycl_md_t &dst_md() const { return conf_.dst_md; }
 
     void *data_ptr() const { return data_.get_pointer(); }
     void *weights_ptr() const { return weights_.get_pointer(); }
     void *dst_ptr() const { return dst_.get_pointer(); }
 
-    static dim_t offset(const xpu::sycl::md_t &mem, dims_t dims) {
+    static dim_t offset(const sycl_md_t &mem, dims_t dims) {
         const int ndims = mem.ndims();
         switch (ndims) {
             case 1: return mem.off(dims[0]);
@@ -136,7 +135,7 @@ private:
     }
 
     static dim_t weights_offset(
-            const int mask, const xpu::sycl::md_t &mem, dims_t &dims) {
+            const int mask, const sycl_md_t &mem, dims_t &dims) {
         dims_t dims_w {};
         std::copy(dims, dims + max_supported_ndims, dims_w);
         utils::apply_mask_on_dims(dims_w, mem.ndims(), mask);
@@ -144,21 +143,18 @@ private:
     }
 
     sycl_prelu_conf_t conf_;
-    xpu::sycl::in_memory_arg_t data_;
-    xpu::sycl::in_memory_arg_t weights_;
-    xpu::sycl::out_memory_arg_t dst_;
+    sycl_in_memory_arg_t data_;
+    sycl_in_memory_arg_t weights_;
+    sycl_out_memory_arg_t dst_;
 };
 
 struct prelu_bwd_kernel_vec_t {
     static constexpr int vec_len = 8;
 
     prelu_bwd_kernel_vec_t(const sycl_prelu_conf_t &conf,
-            xpu::sycl::in_memory_arg_t &data,
-            xpu::sycl::out_memory_arg_t &diff_data,
-            xpu::sycl::in_memory_arg_t &weights,
-            xpu::sycl::out_memory_arg_t &diff_weights,
-            xpu::sycl::in_memory_arg_t &diff_dst,
-            xpu::sycl::out_memory_arg_t &scratchpad)
+            sycl_in_memory_arg_t &data, sycl_out_memory_arg_t &diff_data,
+            sycl_in_memory_arg_t &weights, sycl_out_memory_arg_t &diff_weights,
+            sycl_in_memory_arg_t &diff_dst, sycl_out_memory_arg_t &scratchpad)
         : conf_(conf)
         , data_(data)
         , diff_data_(diff_data)
@@ -180,11 +176,17 @@ struct prelu_bwd_kernel_vec_t {
                         diff_weights_ptr(), diff_dst_ptr(), diff_data_ptr(),
                         ithr);
                 break;
-            default:
+            case broadcasting_strategy_t::per_oc:
+            case broadcasting_strategy_t::per_oc_spatial:
+            case broadcasting_strategy_t::per_mb_spatial:
+            case broadcasting_strategy_t::per_mb_w:
+            case broadcasting_strategy_t::per_w:
+            case broadcasting_strategy_t::shared_axes:
                 calculate_shared_axes(data_ptr(), weights_ptr(),
                         diff_weights_ptr(), diff_dst_ptr(), diff_data_ptr(),
                         ithr, item);
                 break;
+            default: return;
         }
     }
 
@@ -237,13 +239,11 @@ struct prelu_bwd_kernel_vec_t {
     }
 
 private:
-    const xpu::sycl::md_t &data_md() const { return conf_.data_md; }
-    const xpu::sycl::md_t &weights_md() const { return conf_.weights_md; }
-    const xpu::sycl::md_t &diff_data_md() const { return conf_.diff_data_md; }
-    const xpu::sycl::md_t &diff_weights_md() const {
-        return conf_.diff_weights_md;
-    }
-    const xpu::sycl::md_t &diff_dst_md() const { return conf_.diff_dst_md; }
+    const sycl_md_t &data_md() const { return conf_.data_md; }
+    const sycl_md_t &weights_md() const { return conf_.weights_md; }
+    const sycl_md_t &diff_data_md() const { return conf_.diff_data_md; }
+    const sycl_md_t &diff_weights_md() const { return conf_.diff_weights_md; }
+    const sycl_md_t &diff_dst_md() const { return conf_.diff_dst_md; }
 
     float *data_ptr() const { return (float *)(data_.get_pointer()); }
     float *weights_ptr() const { return (float *)(weights_.get_pointer()); }
@@ -256,7 +256,7 @@ private:
         return (float *)(scratchpad_.get_pointer());
     }
 
-    static dim_t offset(const xpu::sycl::md_t &mem, dims_t dims) {
+    static dim_t offset(const sycl_md_t &mem, dims_t dims) {
         const int ndims = mem.ndims();
         switch (ndims) {
             case 1: return mem.off(dims[0]);
@@ -270,7 +270,7 @@ private:
     }
 
     static dim_t weights_offset(
-            const int mask, const xpu::sycl::md_t &mem, dims_t &dims) {
+            const int mask, const sycl_md_t &mem, dims_t &dims) {
         dims_t dims_w {};
         std::copy(dims, dims + max_supported_ndims, dims_w);
         utils::apply_mask_on_dims(dims_w, mem.ndims(), mask);
@@ -443,13 +443,9 @@ private:
         size_t ithr = item.get_group(0) * conf_.wg_size + item.get_local_id();
         dims_t dims_d, dims_w;
         for (int i = 0; i < max_supported_ndims; i++) {
-            dim_t data_dim_i = data_md().dims()[i];
-            dim_t data_ndims = data_md().ndims();
-            dims_d[i] = (data_dim_i > 0 && i < data_ndims) ? data_dim_i : 1;
-            dim_t weights_dim_i = weights_md().dims()[i];
-            dim_t weights_ndims = weights_md().ndims();
-            dims_w[i] = (weights_dim_i > 0 && i < weights_ndims) ? weights_dim_i
-                                                                 : 1;
+            dims_d[i] = (data_md().dims()[i] != 0) ? data_md().dims()[i] : 1;
+            dims_w[i] = (weights_md().dims()[i] != 0) ? weights_md().dims()[i]
+                                                      : 1;
         }
 
         const size_t nthr = conf_.n_thr;
@@ -544,12 +540,12 @@ private:
     }
 
     sycl_prelu_conf_t conf_;
-    xpu::sycl::in_memory_arg_t data_;
-    xpu::sycl::out_memory_arg_t diff_data_;
-    xpu::sycl::in_memory_arg_t weights_;
-    xpu::sycl::out_memory_arg_t diff_weights_;
-    xpu::sycl::in_memory_arg_t diff_dst_;
-    xpu::sycl::out_memory_arg_t scratchpad_;
+    sycl_in_memory_arg_t data_;
+    sycl_out_memory_arg_t diff_data_;
+    sycl_in_memory_arg_t weights_;
+    sycl_out_memory_arg_t diff_weights_;
+    sycl_in_memory_arg_t diff_dst_;
+    sycl_out_memory_arg_t scratchpad_;
 };
 
 } // namespace sycl

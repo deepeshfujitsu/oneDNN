@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2019-2024 Intel Corporation
+* Copyright 2019-2022 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -17,19 +17,19 @@
 #ifndef SYCL_DEVICE_INFO_HPP
 #define SYCL_DEVICE_INFO_HPP
 
-#include "gpu/intel/compute/device_info.hpp"
+#include "gpu/compute/device_info.hpp"
 
 namespace dnnl {
 namespace impl {
 namespace sycl {
 
-class sycl_device_info_t : public gpu::intel::compute::device_info_t {
+class sycl_device_info_t : public gpu::compute::device_info_t {
 protected:
-    status_t init_device_name(impl::engine_t *engine) override;
-    status_t init_arch(impl::engine_t *engine) override;
-    status_t init_runtime_version(impl::engine_t *engine) override;
-    status_t init_extensions(impl::engine_t *engine) override;
-    status_t init_attributes(impl::engine_t *engine) override;
+    status_t init_device_name(engine_t *engine) override;
+    status_t init_arch(engine_t *engine) override;
+    status_t init_runtime_version(engine_t *engine) override;
+    status_t init_extensions(engine_t *engine) override;
+    status_t init_attributes(engine_t *engine) override;
 };
 
 } // namespace sycl

@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2020-2024 Intel Corporation
+* Copyright 2020-2023 Intel Corporation
 * Copyright 2020 Codeplay Software Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,8 +20,19 @@
 #include "hip/hip_runtime.h"
 
 #include "miopen/miopen.h"
-#include "xpu/sycl/utils.hpp"
+#include "sycl/sycl_utils.hpp"
 
+#include "gpu/amd/miopen_batch_normalization.hpp"
+#include "gpu/amd/miopen_binary.hpp"
+#include "gpu/amd/miopen_convolution.hpp"
+#include "gpu/amd/miopen_deconvolution.hpp"
+#include "gpu/amd/miopen_eltwise.hpp"
+#include "gpu/amd/miopen_gemm_inner_product.hpp"
+#include "gpu/amd/miopen_lrn.hpp"
+#include "gpu/amd/miopen_matmul.hpp"
+#include "gpu/amd/miopen_pooling.hpp"
+#include "gpu/amd/miopen_reduction.hpp"
+#include "gpu/amd/miopen_softmax.hpp"
 #include "gpu/amd/sycl_hip_compat.hpp"
 #include "gpu/amd/sycl_hip_engine.hpp"
 #include "gpu/amd/sycl_hip_scoped_context.hpp"
@@ -32,7 +43,13 @@ namespace impl {
 namespace gpu {
 namespace amd {
 
-status_t hip_engine_create(impl::engine_t **engine, engine_kind_t engine_kind,
+bool is_amd_gpu(const ::sycl::device &dev) {
+    constexpr int amd_vendor_id = 0x1002;
+    return dev.is_gpu()
+            && dev.get_info<::sycl::info::device::vendor_id>() == amd_vendor_id;
+}
+
+status_t hip_engine_create(engine_t **engine, engine_kind_t engine_kind,
         const ::sycl::device &dev, const ::sycl::context &ctx, size_t index) {
     CHECK(amd::check_device(engine_kind));
     std::unique_ptr<amd::sycl_hip_engine_t, engine_deleter_t> hip_engine(
@@ -55,7 +72,7 @@ sycl_hip_engine_t::sycl_hip_engine_t(engine_kind_t kind,
 sycl_hip_engine_t::sycl_hip_engine_t(
         const ::sycl::device &dev, const ::sycl::context &ctx, size_t index)
     : sycl_hip_engine_t(engine_kind::gpu, dev, ctx, index) {
-    assert(xpu::sycl::is_amd_gpu(dev));
+    assert(is_amd_gpu(dev));
 }
 
 status_t sycl_hip_engine_t::set_rocblas_handle() {
@@ -99,9 +116,13 @@ hipDevice_t sycl_hip_engine_t::get_underlying_device() const {
     return compat::get_native<hipDevice_t>(device());
 }
 
+status_t sycl_hip_engine_t::create_stream(stream_t **stream, unsigned flags) {
+    return sycl_hip_stream_t::create_stream(stream, this, flags);
+}
+
 status_t sycl_hip_engine_t::create_stream(
-        impl::stream_t **stream, impl::stream_impl_t *stream_impl) {
-    return sycl_hip_stream_t::create_stream(stream, this, stream_impl);
+        stream_t **stream, ::sycl::queue &queue) {
+    return sycl_hip_stream_t::create_stream(stream, this, queue);
 }
 
 miopenHandle_t *sycl_hip_engine_t::get_miopen_handle() {
@@ -112,6 +133,12 @@ miopenHandle_t *sycl_hip_engine_t::get_miopen_handle() {
 rocblas_handle *sycl_hip_engine_t::get_rocblas_handle() {
     if (!rocblas_handle_.is_set()) set_rocblas_handle();
     return rocblas_handle_.get().get();
+}
+
+device_id_t sycl_hip_engine_t::device_id() const {
+    return device_id_t(static_cast<int>(impl::sycl::backend_t::amd),
+            static_cast<uint64_t>(compat::get_native<hipDevice_t>(device())),
+            static_cast<uint64_t>(0));
 }
 
 void sycl_hip_engine_t::activate_stream_rocblas(HIPstream hip_stream) {
@@ -133,6 +160,55 @@ void sycl_hip_engine_t::activate_stream_miopen(HIPstream hip_stream) {
     if (current_stream_id != hip_stream) {
         MIOPEN_EXECUTE_FUNC_S(miopenSetStream, *miopen_handle, hip_stream);
     }
+}
+
+namespace {
+using namespace dnnl::impl::data_type;
+
+// clang-format off
+constexpr dnnl::impl::impl_list_item_t sycl_hip_impl_list[] = {
+        // Binary
+        INSTANCE(miopen_binary_t)
+        // Elementwise
+        INSTANCE(miopen_eltwise_fwd_t)
+        INSTANCE(miopen_eltwise_bwd_t)
+        // Softmax
+        INSTANCE(miopen_softmax_fwd_t)
+        INSTANCE(miopen_softmax_bwd_t)
+        // LRN
+        INSTANCE(miopen_lrn_fwd_t)
+        INSTANCE(miopen_lrn_bwd_t)
+        // Pooling
+        INSTANCE(miopen_pooling_fwd_t)
+        INSTANCE(miopen_pooling_bwd_t)
+        // Reduction
+        INSTANCE(miopen_reduction_t)
+        // MatMul
+        INSTANCE(miopen_matmul_t)
+        // Inner Product
+        INSTANCE(miopen_gemm_inner_product_fwd_t)
+        INSTANCE(miopen_gemm_inner_product_bwd_data_t)
+        INSTANCE(miopen_gemm_inner_product_bwd_weights_t)
+        // Convolution
+        INSTANCE(miopen_convolution_fwd_t)
+        INSTANCE(miopen_convolution_bwd_data_t)
+        INSTANCE(miopen_convolution_bwd_weights_t)
+        // Batch Normalization
+        INSTANCE(miopen_batch_normalization_fwd_t)
+        INSTANCE(miopen_batch_normalization_bwd_t)
+        // Deconvolution
+        INSTANCE(miopen_deconvolution_fwd_t)
+        INSTANCE(miopen_deconvolution_bwd_data_t)
+        INSTANCE(miopen_deconvolution_bwd_weights_t)
+
+        nullptr,
+};
+// clang-format on
+} // namespace
+
+const dnnl::impl::impl_list_item_t *sycl_hip_engine_t::get_implementation_list(
+        const op_desc_t *) const {
+    return sycl_hip_impl_list;
 }
 
 } // namespace amd

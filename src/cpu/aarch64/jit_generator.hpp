@@ -210,6 +210,21 @@ public:
         align(alignment);
         L(label);
     }
+    
+    template <typename T>
+    Xbyak_aarch64::XReg EVEX_compress_addr(const Xbyak_aarch64::XReg &addr,
+            const Xbyak_aarch64::XReg &x_tmp, Xbyak_aarch64::XReg base,
+            T raw_offt, bool bcast = false) {
+
+        assert(raw_offt <= INT_MAX);
+        auto offt = static_cast<int>(raw_offt);
+
+        add_imm(addr, base, offt, x_tmp);
+        if (bcast) {
+            // addr is the same as addr when bcast is false.
+        }
+        return addr;
+    }
 
     template <typename T>
     Xbyak_aarch64::XReg addr_off(const Xbyak_aarch64::XReg &base, const T off,
@@ -709,10 +724,6 @@ private:
                 = reinterpret_cast<const uint8_t *>(CodeGenerator::getCode());
         register_jit_code(code, getSize() * CSIZE);
         return code;
-    }
-
-    inline bool is_valid_isa(cpu_isa_t isa) {
-        return is_subset(isa, max_cpu_isa_) && mayiuse(isa);
     }
 
     static inline bool is_initialized() {

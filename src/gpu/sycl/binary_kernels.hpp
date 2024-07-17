@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2022-2024 Intel Corporation
+* Copyright 2022-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 #include "gpu/sycl/sycl_post_ops.hpp"
 #include "gpu/sycl/sycl_primitive_conf.hpp"
 #include "gpu/sycl/sycl_q10n.hpp"
-#include "xpu/sycl/types.hpp"
+#include "gpu/sycl/sycl_types.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -30,30 +30,18 @@ namespace sycl {
 
 struct binary_kernel_vec_t {
     static constexpr int vec_len = 8;
-    static constexpr int max_supported_ndims = 6;
 
     binary_kernel_vec_t(const sycl_binary_conf_t &conf,
-            xpu::sycl::in_memory_arg_t &src0, xpu::sycl::in_memory_arg_t &src1,
-            xpu::sycl::out_memory_arg_t &dst,
-            xpu::sycl::in_memory_arg_t &src0_scale,
-            xpu::sycl::in_memory_arg_t &src1_scale, data_type_t scales_dt,
-            xpu::sycl::in_memory_arg_t &po1_src,
-            xpu::sycl::in_memory_arg_t &po2_src,
-            xpu::sycl::in_memory_arg_t &po3_src,
-            xpu::sycl::in_memory_arg_t &po4_src,
-            xpu::sycl::in_memory_arg_t &po5_src)
+            sycl_in_memory_arg_t &src0, sycl_in_memory_arg_t &src1,
+            sycl_out_memory_arg_t &dst, sycl_in_memory_arg_t &src0_scale,
+            sycl_in_memory_arg_t &src1_scale, data_type_t scales_dt)
         : conf_(conf)
         , src0_(src0)
         , src1_(src1)
         , dst_(dst)
         , src0_scale_(src0_scale)
         , src1_scale_(src1_scale)
-        , scales_dt_(scales_dt)
-        , po1_src_(po1_src)
-        , po2_src_(po2_src)
-        , po3_src_(po3_src)
-        , po4_src_(po4_src)
-        , po5_src_(po5_src) {}
+        , scales_dt_(scales_dt) {}
 
     void operator()(::sycl::nd_item<1> item) const {
         auto sg = item.get_sub_group();
@@ -75,22 +63,8 @@ struct binary_kernel_vec_t {
                         ? load_float_value(scales_dt_, src1_scale_ptr(), 0)
                         : 1.f);
 
-        dims_t dims, strides, off_dst, off0, off1;
-        bool any_broadcast = false;
-        for (int i = 0; i < max_supported_ndims; i++) {
-            if (i < dst_md().ndims()) {
-                dims[i] = dst_md().dims()[i];
-                strides[i] = dst_md().strides()[i];
-                any_broadcast |= conf_.broadcast_dims0[i];
-                any_broadcast |= conf_.broadcast_dims1[i];
-            } else {
-                dims[i] = 1;
-                strides[i] = INT_MAX;
-            }
-        }
-        if (!any_broadcast && conf_.post_ops.get_post_op() == 0
-                && sg_base_idx + (sg.get_local_range()[0] * conf_.block_size)
-                        < conf_.wk_size) {
+        if (sg_base_idx + (sg.get_local_range()[0] * conf_.block_size)
+                < conf_.wk_size) {
             for (int i = 0; i < conf_.block_size / vec_len; i++) {
                 auto src0_vec = load_float_vec<vec_len>(
                         src0_md().data_type(), src0_ptr(), vec_base_idx + i);
@@ -116,22 +90,10 @@ struct binary_kernel_vec_t {
             for (int i = 0; i < conf_.block_size; i++) {
                 int idx = base_idx + i;
                 if (idx < conf_.wk_size) {
-                    for (int i = 0; i < max_supported_ndims; i++) {
-                        off_dst[i] = idx / strides[i] % dims[i];
-                    }
-
-                    for (int i = 0; i < max_supported_ndims; i++) {
-                        off0[i] = conf_.broadcast_dims0[i] ? 0 : off_dst[i];
-                        off1[i] = conf_.broadcast_dims1[i] ? 0 : off_dst[i];
-                    }
-
-                    int idx0 = src0_md().off_v(off0);
-                    int idx1 = src1_md().off_v(off1);
-
                     auto src0 = load_float_value(
-                            src0_md().data_type(), src0_ptr(), idx0);
+                            src0_md().data_type(), src0_ptr(), idx);
                     auto src1 = load_float_value(
-                            src1_md().data_type(), src1_ptr(), idx1);
+                            src1_md().data_type(), src1_ptr(), idx);
                     auto dst = load_float_value(
                             dst_md().data_type(), dst_ptr(), idx);
 
@@ -139,9 +101,7 @@ struct binary_kernel_vec_t {
                     if (conf_.do_scale_src1) src1 *= sm_1;
 
                     auto acc = compute_alg_n(src0, src1, conf_.alg_kind);
-                    ::sycl::vec<float, 16> post_po_sr
-                            = post_op_src_val(off_dst);
-                    acc = conf_.post_ops.apply(acc, dst, post_po_sr);
+                    acc = conf_.post_ops.apply(acc, dst);
                     store_float_value(
                             dst_md().data_type(), acc, dst_ptr(), idx);
                 }
@@ -150,9 +110,9 @@ struct binary_kernel_vec_t {
     }
 
 private:
-    const xpu::sycl::md_t &src0_md() const { return conf_.src0_md; }
-    const xpu::sycl::md_t &src1_md() const { return conf_.src1_md; }
-    const xpu::sycl::md_t &dst_md() const { return conf_.dst_md; }
+    const sycl_md_t &src0_md() const { return conf_.src0_md; }
+    const sycl_md_t &src1_md() const { return conf_.src1_md; }
+    const sycl_md_t &dst_md() const { return conf_.dst_md; }
 
     void *src0_ptr() const { return src0_.get_pointer(); }
     void *src1_ptr() const { return src1_.get_pointer(); }
@@ -162,69 +122,6 @@ private:
     }
     float *src1_scale_ptr() const {
         return static_cast<float *>(src1_scale_.get_pointer());
-    }
-
-    inline ::sycl::vec<float, 16> post_op_src_val(dims_t data_off) const {
-        ::sycl::vec<float, 16> post_po_sr;
-        const auto maxPostPo = conf_.post_ops.get_post_op();
-
-        for (dim_t po_idx = 0; po_idx < maxPostPo; po_idx++) {
-            float res = 0.0f;
-            if (po_idx == 0)
-                res = get_post_op_val(po1_src_, po_idx, data_off);
-            else if (po_idx == 1)
-                res = get_post_op_val(po2_src_, po_idx, data_off);
-            else if (po_idx == 2)
-                res = get_post_op_val(po3_src_, po_idx, data_off);
-            else if (po_idx == 3)
-                res = get_post_op_val(po4_src_, po_idx, data_off);
-            else if (po_idx == 4)
-                res = get_post_op_val(po5_src_, po_idx, data_off);
-
-            post_po_sr[po_idx] = res;
-        }
-        return post_po_sr;
-    }
-
-    float get_post_op_val(const xpu::sycl::in_memory_arg_t &bin_src_op,
-            dim_t &idx, dims_t offset) const {
-        auto src1_desc = conf_.binary_src_arr[idx];
-
-        const auto off = get_binary_src1_off(
-                src1_desc, offset, dst_md().dims(), dst_md().ndims());
-
-        auto dst = load_float_value(
-                src1_desc.data_type(), bin_src_op.get_pointer(), off);
-        return dst;
-    }
-
-    dim_t get_binary_src1_off(const xpu::sycl::md_t &src1_md, dims_t offset,
-            const xpu::sycl::md_t::dims32_t &dst_dims,
-            const xpu::sycl::md_t::dim32_t &dst_ndims) const {
-        const dim_t mask_binary_po
-                = get_dims_mask(dst_dims, src1_md.dims(), dst_ndims);
-        return get_po_tensor_off(
-                src1_md, offset, dst_dims, dst_ndims, mask_binary_po);
-    }
-
-    inline dim_t get_dims_mask(const xpu::sycl::md_t::dims32_t &dims1,
-            const xpu::sycl::md_t::dims32_t &dims2, const dim_t &ndims,
-            bool skip_dim_of_one = false) const {
-        dim_t mask = 0;
-        for (dim_t d = 0; d < ndims; ++d) {
-            // Disable mask_bit for dimensions of `1` by request.
-            dim_t mask_bit = skip_dim_of_one && dims1[d] == 1 ? 0 : (1 << d);
-            mask += dims1[d] == dims2[d] ? mask_bit : 0;
-        }
-        return mask;
-    }
-
-    inline dim_t get_po_tensor_off(const xpu::sycl::md_t &tensor_md,
-            dims_t offset, const xpu::sycl::md_t::dims32_t &dst_dims,
-            const dim_t &dst_ndims, const dim_t &mask) const {
-        dims_t offset_po {};
-        utils::copy_dims_with_mask(offset_po, offset, dst_ndims, mask);
-        return tensor_md.off_v(offset_po);
     }
 
     template <int width>
@@ -274,17 +171,12 @@ private:
 
     sycl_binary_conf_t conf_;
 
-    xpu::sycl::in_memory_arg_t src0_;
-    xpu::sycl::in_memory_arg_t src1_;
-    xpu::sycl::out_memory_arg_t dst_;
-    xpu::sycl::in_memory_arg_t src0_scale_;
-    xpu::sycl::in_memory_arg_t src1_scale_;
+    sycl_in_memory_arg_t src0_;
+    sycl_in_memory_arg_t src1_;
+    sycl_out_memory_arg_t dst_;
+    sycl_in_memory_arg_t src0_scale_;
+    sycl_in_memory_arg_t src1_scale_;
     data_type_t scales_dt_;
-    xpu::sycl::in_memory_arg_t po1_src_;
-    xpu::sycl::in_memory_arg_t po2_src_;
-    xpu::sycl::in_memory_arg_t po3_src_;
-    xpu::sycl::in_memory_arg_t po4_src_;
-    xpu::sycl::in_memory_arg_t po5_src_;
 };
 
 } // namespace sycl

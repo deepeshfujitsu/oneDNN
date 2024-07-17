@@ -103,10 +103,6 @@ struct brgemm_matmul_conf_t {
     bool s8s8_compensation_required;
     bool packed_sparse_weights;
     bool is_oscale_per_n;
-    bool is_oscale_per_k;
-    bool apply_scales_in_buffer_b;
-    bool req_transpose_scales;
-    bool with_wei_decompression;
     brgemm_broadcast_t src_zp_type;
     brgemm_broadcast_t wei_zp_type;
     brgemm_broadcast_t dst_zp_type;
@@ -221,7 +217,6 @@ struct brgemm_matmul_conf_utils_t {
     inline bool use_buffer_b(bool use_heuristic = true) const {
         if (bgmmc.is_runtime_N) return true;
         if (bgmmc.is_bf16_with_int_wei) return true;
-        if (bgmmc.apply_scales_in_buffer_b) return true;
 
         if (bgmmc.is_amx)
             // use b_buffer for AMX when:
@@ -332,12 +327,6 @@ private:
     const bool n_blk_fixed;
     const cpu_isa_t isa_;
 };
-
-// This function initializes all required fields in the conf object to generate
-// copy_b kernel. Used in this impl and re-used in brgemm kernel API.
-status_t init_conf(brgemm_matmul_conf_t &conf, dim_t batch, dim_t K, dim_t N,
-        dim_t n_blk, data_type_t in_type, data_type_t out_type,
-        format_tag_t in_tag);
 
 void init_aux_values(brgemm_matmul_conf_t &bgmmc,
         const memory_desc_wrapper &src_d, const memory_desc_wrapper &wei_d,

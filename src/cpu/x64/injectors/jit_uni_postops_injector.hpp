@@ -65,11 +65,6 @@ public:
     // value in compliance with same vector length.
     static jit_uni_postops_injector_base_t *create(jit_generator *host,
             cpu_isa_t isa, const post_ops_t &post_ops,
-            const binary_injector::static_params_t &binary_static_params,
-            const eltwise_injector::static_params_t &eltwise_static_params);
-
-    static jit_uni_postops_injector_base_t *create(jit_generator *host,
-            cpu_isa_t isa, const post_ops_t &post_ops,
             const binary_injector::static_params_t &binary_static_params);
 
     virtual ~jit_uni_postops_injector_base_t() = default;
@@ -171,7 +166,8 @@ private:
     post_ops_t post_ops_;
     jit_generator *host_;
     // Key is a numerical order of a post-op in attributes.
-    std::map<int, jit_uni_eltwise_injector<isa, Vmm>> alg_to_eltwise_injector_;
+    std::map<int, jit_uni_eltwise_injector_f32<isa, Vmm>>
+            alg_to_eltwise_injector_;
     std::unique_ptr<binary_injector::jit_uni_binary_injector_t<isa, Vmm>>
             binary_injector_;
     lambda_jit_injectors_t lambda_jit_injectors_;

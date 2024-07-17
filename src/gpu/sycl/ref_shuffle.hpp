@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2023-2024 Intel Corporation
+* Copyright 2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@
 #include "gpu/sycl/sycl_post_ops.hpp"
 #include "gpu/sycl/sycl_primitive_conf.hpp"
 #include "gpu/sycl/sycl_q10n.hpp"
+#include "gpu/sycl/sycl_types.hpp"
 #include "sycl/sycl_stream.hpp"
-#include "xpu/sycl/types.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -39,7 +39,7 @@ struct ref_shuffle_t : public sycl_gpu_primitive_t {
 
         DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_shuffle_t);
 
-        status_t init(impl::engine_t *engine) {
+        status_t init(engine_t *engine) {
             using namespace format_tag;
             using namespace data_type;
             const memory_desc_wrapper data_d(src_md(0));
@@ -62,12 +62,12 @@ struct ref_shuffle_t : public sycl_gpu_primitive_t {
         sycl_shuffle_conf_t conf_;
     };
 
-    status_t init(impl::engine_t *engine) override;
+    status_t init(engine_t *engine) override;
 
 private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
     status_t execute(const exec_ctx_t &ctx) const override;
-    intel::compute::kernel_t kernel_;
+    compute::kernel_t kernel_;
 };
 
 } // namespace sycl

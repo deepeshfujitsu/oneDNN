@@ -64,12 +64,12 @@ bool is_amx(cpu_isa_t isa) {
 }
 
 bool post_ops_ok(jit_brgemm_conv_conf_t &jcp, primitive_attr_t &attr,
-        const memory_desc_wrapper &dst_d, bool use_inversion) {
+        const memory_desc_wrapper &dst_d, bool is_deconv) {
     using namespace injector;
 
     const auto &post_ops = attr.post_ops_;
 
-    if (post_ops.len() > 0 && !use_inversion) return false;
+    if (post_ops.len() > 0 && !is_deconv) return false;
 
     return injector::post_ops_ok(post_ops_ok_args_t(jcp.isa,
             {sum, eltwise, binary}, post_ops, &dst_d,
@@ -116,7 +116,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             if (is_3d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIdhwo64i : Idhwo64i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIdhwO16o64i4o : IdhwO16o64i4o;
                     else
@@ -131,7 +131,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             } else if (is_1d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIwo64i : Iwo64i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIwO16o64i4o : IwO16o64i4o;
                     else
@@ -148,7 +148,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
                 UNUSED(is_2d);
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIhwo64i : Ihwo64i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIhwO16o64i4o : IhwO16o64i4o;
                     else
@@ -165,7 +165,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             if (is_3d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIdhwo48i : Idhwo48i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIdhwO16o48i4o : IdhwO16o48i4o;
                     else
@@ -180,7 +180,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             } else if (is_1d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIwo48i : Iwo48i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIwO16o48i4o : IwO16o48i4o;
                     else
@@ -197,7 +197,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
                 UNUSED(is_2d);
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIhwo48i : Ihwo48i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIhwO16o48i4o : IhwO16o48i4o;
                     else
@@ -214,7 +214,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             if (is_3d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIdhwo32i : Idhwo32i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIdhwO16o32i4o : IdhwO16o32i4o;
                     else
@@ -229,7 +229,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             } else if (is_1d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIwo32i : Iwo32i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIwO16o32i4o : IwO16o32i4o;
                     else
@@ -246,7 +246,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
                 UNUSED(is_2d);
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIhwo32i : Ihwo32i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIhwO16o32i4o : IhwO16o32i4o;
                     else
@@ -263,7 +263,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             if (is_3d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIdhwo24i : Idhwo24i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3))
+                else if (jcp.wei_dt == s8)
                     wei_tag = with_groups ? gIdhwO24i4o : IdhwO24i4o;
                 else if (one_of(jcp.wei_dt, bf16, f16))
                     wei_tag = with_groups ? gIdhwO24i2o : IdhwO24i2o;
@@ -272,7 +272,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             } else if (is_1d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIwo24i : Iwo24i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3))
+                else if (jcp.wei_dt == s8)
                     wei_tag = with_groups ? gIwO24i4o : IwO24i4o;
                 else if (one_of(jcp.wei_dt, bf16, f16))
                     wei_tag = with_groups ? gIwO24i2o : IwO24i2o;
@@ -284,7 +284,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
 
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIhwo24i : Ihwo24i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3))
+                else if (jcp.wei_dt == s8)
                     wei_tag = with_groups ? gIhwO24i4o : IhwO24i4o;
                 else if (one_of(jcp.wei_dt, bf16, f16))
                     wei_tag = with_groups ? gIhwO24i2o : IhwO24i2o;
@@ -295,7 +295,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             if (is_3d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIdhwo16i : Idhwo16i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIdhwO16o16i4o : IdhwO16o16i4o;
                     else
@@ -310,7 +310,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             } else if (is_1d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIwo16i : Iwo16i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIwO16o16i4o : IwO16o16i4o;
                     else
@@ -328,7 +328,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
 
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIhwo16i : Ihwo16i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3)) {
+                else if (jcp.wei_dt == s8) {
                     if (jcp.is_oc_padded)
                         wei_tag = with_groups ? gIhwO16o16i4o : IhwO16o16i4o;
                     else
@@ -345,7 +345,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             if (is_3d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIdhwo8i : Idhwo8i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3))
+                else if (jcp.wei_dt == s8)
                     wei_tag = with_groups ? gIdhwO8i4o : IdhwO8i4o;
                 else if (one_of(jcp.wei_dt, bf16, f16))
                     wei_tag = with_groups ? gIdhwO8i2o : IdhwO8i2o;
@@ -354,7 +354,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
             } else if (is_1d) {
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIwo8i : Iwo8i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3))
+                else if (jcp.wei_dt == s8)
                     wei_tag = with_groups ? gIwO8i4o : IwO8i4o;
                 else if (one_of(jcp.wei_dt, bf16, f16))
                     wei_tag = with_groups ? gIwO8i2o : IwO8i2o;
@@ -366,7 +366,7 @@ status_t pick_tags(jit_brgemm_conv_conf_t &jcp, memory_desc_t &diff_dst_md,
 
                 if (no_vnni_format)
                     wei_tag = with_groups ? gIhwo8i : Ihwo8i;
-                else if (one_of(jcp.wei_dt, s8, f8_e5m2, f8_e4m3))
+                else if (jcp.wei_dt == s8)
                     wei_tag = with_groups ? gIhwO8i4o : IhwO8i4o;
                 else if (one_of(jcp.wei_dt, bf16, f16))
                     wei_tag = with_groups ? gIhwO8i2o : IhwO8i2o;
@@ -1403,7 +1403,8 @@ brgemm_broadcast_t get_zp_type(const primitive_attr_t &attr, int arg) {
 status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
         const convolution_desc_t &cd, memory_desc_t &diff_dst_md,
         memory_desc_t &weights_md, memory_desc_t &diff_src_md,
-        memory_desc_t &bias_md, primitive_attr_t &attr, int nthreads) {
+        memory_desc_t &bias_md, primitive_attr_t &attr, int nthreads,
+        bool is_deconv) {
     using namespace prop_kind;
 
     brg_blocking_t::L1 = platform::get_per_core_cache_size(1);
@@ -1450,7 +1451,7 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     const bool has_uneven_spatial = jcp.id % jcp.stride_d != 0
             || jcp.ih % jcp.stride_h != 0 || jcp.has_uneven_iw;
 
-    if (cd.use_inversion && has_uneven_spatial) return status::unimplemented;
+    if (is_deconv && has_uneven_spatial) return status::unimplemented;
 
     jcp.dilate_d = (ndims == 5) ? cd.dilates[0] : 0;
     jcp.dilate_h = (ndims == 3) ? 0 : cd.dilates[ndims - 4];
@@ -1499,8 +1500,8 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
 
     VDISPATCH_CONV_IC(!jcp.is_bf32, VERBOSE_UNSUPPORTED_DT);
 
-    const data_type_t last_oc_block_dt = get_mac_emu_data_type(
-            jcp.wei_dt, isa, isa == avx512_core_fp16 && !jcp.is_fp8_convert);
+    const data_type_t last_oc_block_dt
+            = get_mac_emu_data_type(jcp.wei_dt, isa, isa == avx512_core_fp16);
     jcp.vnni_block = data_type_vnni_granularity(last_oc_block_dt);
 
     // TODO: optimize grouped convolutions with small oc
@@ -1533,7 +1534,7 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     const bool is_f32
             = utils::everyone_is(f32, jcp.src_dt, jcp.wei_dt, jcp.dst_dt);
 
-    // Disable shapes that cause performance regression
+    // Disable 4 shapes that cause performance regression
     const auto is_regression_shape = jcp.id == 1 && jcp.od == 1
             && ((jcp.ic == 128 && jcp.oc == 256 && jcp.ih == 101 && jcp.oh == 49
                         && jcp.iw == 85 && jcp.ow == 41)
@@ -1547,35 +1548,6 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
                     || (jcp.ic == 1024 && jcp.oc == 2048
                             && everyone_is(4, jcp.ih, jcp.iw)
                             && everyone_is(2, jcp.oh, jcp.ow)
-                            && everyone_is(4, jcp.kh, jcp.kw)
-                            && everyone_is(2, jcp.stride_h, jcp.stride_w))
-                    || (jcp.ic == 64 && jcp.oc == 128
-                            && everyone_is(513, jcp.ih, jcp.iw)
-                            && everyone_is(256, jcp.oh, jcp.ow)
-                            && everyone_is(3, jcp.kh, jcp.kw)
-                            && everyone_is(2, jcp.stride_h, jcp.stride_w))
-                    || (jcp.ic == 32 && jcp.oc == 64
-                            && everyone_is(1025, jcp.ih, jcp.iw)
-                            && everyone_is(512, jcp.oh, jcp.ow)
-                            && everyone_is(3, jcp.kh, jcp.kw)
-                            && everyone_is(2, jcp.stride_h, jcp.stride_w))
-                    || (jcp.ic == 128 && jcp.oc == 256
-                            && everyone_is(257, jcp.ih, jcp.iw)
-                            && everyone_is(128, jcp.oh, jcp.ow)
-                            && everyone_is(3, jcp.kh, jcp.kw)
-                            && everyone_is(2, jcp.stride_h, jcp.stride_w))
-                    || (jcp.ic == 256 && jcp.oc == 512 && jcp.ih == 49
-                            && jcp.iw == 41 && jcp.oh == 23 && jcp.ow == 19
-                            && everyone_is(5, jcp.kh, jcp.kw)
-                            && everyone_is(2, jcp.stride_h, jcp.stride_w))
-                    || (jcp.ic == 64 && jcp.oc == 128
-                            && everyone_is(14, jcp.ih, jcp.iw)
-                            && everyone_is(7, jcp.oh, jcp.ow)
-                            && everyone_is(4, jcp.kh, jcp.kw)
-                            && everyone_is(2, jcp.stride_h, jcp.stride_w))
-                    || (jcp.ic == 1 && jcp.oc == 64
-                            && everyone_is(28, jcp.ih, jcp.iw)
-                            && everyone_is(14, jcp.oh, jcp.ow)
                             && everyone_is(4, jcp.kh, jcp.kw)
                             && everyone_is(2, jcp.stride_h, jcp.stride_w)));
     VDISPATCH_CONV_IC(!(is_f32 && is_regression_shape),
@@ -1604,6 +1576,9 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     VDISPATCH_CONV_IC(IMPLICATION(is_f32, one_of(isa, avx512_core, avx2)),
             VERBOSE_ISA_DT_MISMATCH);
 
+    VDISPATCH_CONV_IC(post_ops_ok(jcp, attr, diff_src_d, is_deconv),
+            VERBOSE_UNSUPPORTED_POSTOP);
+
     jcp.amx_h = 16;
     jcp.amx_w = 64 / jcp.src_dsz;
 
@@ -1622,12 +1597,10 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     jcp.with_binary = !everyone_is(-1, binary_ind, prelu_ind);
 
     jcp.src_zero_point
-            = get_zp_type(
-                      attr, cd.use_inversion ? DNNL_ARG_SRC : DNNL_ARG_DIFF_DST)
+            = get_zp_type(attr, is_deconv ? DNNL_ARG_SRC : DNNL_ARG_DIFF_DST)
             != brgemm_broadcast_t::none;
     jcp.dst_zero_point
-            = get_zp_type(
-                      attr, cd.use_inversion ? DNNL_ARG_DST : DNNL_ARG_DIFF_SRC)
+            = get_zp_type(attr, is_deconv ? DNNL_ARG_DST : DNNL_ARG_DIFF_SRC)
             != brgemm_broadcast_t::none;
 
     const bool has_zero_points = jcp.src_zero_point || jcp.dst_zero_point;
@@ -1635,13 +1608,11 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     const bool params_ok
             = IMPLICATION(has_zero_points, utils::one_of(jcp.src_dt, u8, s8))
             && IMPLICATION(jcp.src_zero_point,
-                    attr.zero_points_.common(cd.use_inversion
-                                    ? DNNL_ARG_SRC
-                                    : DNNL_ARG_DIFF_DST))
+                    attr.zero_points_.common(
+                            is_deconv ? DNNL_ARG_SRC : DNNL_ARG_DIFF_DST))
             && IMPLICATION(jcp.dst_zero_point,
-                    attr.zero_points_.common(cd.use_inversion
-                                    ? DNNL_ARG_DST
-                                    : DNNL_ARG_DIFF_SRC));
+                    attr.zero_points_.common(
+                            is_deconv ? DNNL_ARG_DST : DNNL_ARG_DIFF_SRC));
     VDISPATCH_CONV_IC(params_ok, VERBOSE_UNSUPPORTED_ZP_CFG);
 
     jcp.nthr = nthreads;
@@ -1659,11 +1630,6 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     format_tag_t src_tag = pick(jcp.ndims - 3, nwc, nhwc, ndhwc);
 
     CHECK(init_tag(jcp.src_tag, diff_dst_md, diff_dst_d, src_tag));
-    CHECK(init_tag(jcp.dst_tag, diff_src_md, diff_src_d, src_tag));
-    CHECK(attr.set_default_formats(&diff_src_md));
-
-    VDISPATCH_CONV_IC(post_ops_ok(jcp, attr, diff_src_d, cd.use_inversion),
-            VERBOSE_UNSUPPORTED_POSTOP);
 
     return status::success;
 }
@@ -1895,7 +1861,8 @@ dim_t precalculate_comp_pad_kernels(const jit_brgemm_conv_conf_t &jcp,
 status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
         const convolution_desc_t &cd, memory_desc_t &diff_dst_md,
         memory_desc_t &weights_md, memory_desc_t &diff_src_md,
-        memory_desc_t &bias_md, primitive_attr_t &attr, int nthreads) {
+        memory_desc_t &bias_md, primitive_attr_t &attr, int nthreads,
+        bool is_deconv) {
 
     using namespace prop_kind;
 
@@ -1903,7 +1870,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     if (!mayiuse(isa)) return status::unimplemented;
 
     CHECK(init_jcp(jcp, isa, cd, diff_dst_md, weights_md, diff_src_md, bias_md,
-            attr, nthreads));
+            attr, nthreads, is_deconv));
 
     const memory_desc_wrapper diff_dst_d(&diff_dst_md);
     const memory_desc_wrapper weights_d(&weights_md);
@@ -2018,6 +1985,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
             = div_up(rnd_up(jcp.gemm_batch_size * sc_size, P4K), sc_size);
 
     CHECK(pick_tags(jcp, diff_dst_md, weights_md, diff_src_md, bias_md));
+    CHECK(attr.set_default_formats(&diff_src_md));
 
     jcp.buffer_size = jcp.LDC * (jcp.M > 0 ? jcp.M : jcp.M_tail);
 
@@ -2042,7 +2010,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
             ? 1 / weights_md.extra.scale_adjust
             : 1.0f;
 
-    if (cd.use_inversion) {
+    if (is_deconv) {
         const auto &src_scales = attr.scales_.get(DNNL_ARG_SRC);
         const auto &wei_scales = attr.scales_.get(DNNL_ARG_WEIGHTS);
         jcp.with_scales = !src_scales.has_default_values()

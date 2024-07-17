@@ -563,7 +563,7 @@ status_t init_brgemm_kernel(x64::brgemm_desc_t *desc, x64::cpu_isa_t isa,
     brgattr.max_bs = max_bs;
     brgattr.max_top_vpad = 0;
     brgattr.max_bottom_vpad = 0;
-    CHECK(brgemm_desc_set_attr(desc, brgattr));
+    brgemm_desc_set_attr(desc, brgattr);
 
     x64::brgemm_kernel_t *_t_ptr;
     CHECK(brgemm_kernel_create(&_t_ptr, *desc));
@@ -1348,8 +1348,6 @@ static status_t init_kernels_diff_wei(rnn_diff_wei_brgemm_t &diff_wei,
             = tmp_matmul_conf_for_reorder.N
             * tmp_matmul_conf_for_reorder.b_dt_sz;
     tmp_matmul_conf_for_reorder.transposed_B = false;
-    tmp_matmul_conf_for_reorder.is_bf16_with_int_wei = false;
-    tmp_matmul_conf_for_reorder.with_wei_decompression = false;
     CHECK(matmul::create_brgemm_matmul_copy_b(
             diff_wei.srcatch_gates_reorder_kernel_,
             &tmp_matmul_conf_for_reorder));

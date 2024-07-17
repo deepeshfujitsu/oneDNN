@@ -16,6 +16,7 @@
 
 #include "dnnl_types.h"
 
+#include "common/bfloat16.hpp"
 #include "common/c_types_map.hpp"
 #include "common/convolution_pd.hpp"
 #include "common/dnnl_thread.hpp"
@@ -53,7 +54,6 @@ bool allow_perf_heuristics(const jit_brgemm_conv_conf_t &jcp) {
     // Disable performance heuristics for f16 as there are no other
     // optimized implementations.
     if (jcp.wei_dt == f16) return false;
-    if (one_of(jcp.wei_dt, f8_e5m2, f8_e4m3)) return false;
     return true;
 }
 } // namespace
@@ -196,8 +196,7 @@ struct brg_blocking_t : public jit_brgemm_conv_conf_t {
 
 bool is_any_eligible(const jit_brgemm_conv_conf_t &jcp) {
     return (jcp.prop_kind == prop_kind::forward_inference || jcp.wei_plain
-            || one_of(jcp.wei_dt, data_type::s8, data_type::f16,
-                    data_type::f8_e5m2, data_type::f8_e4m3)
+            || one_of(jcp.wei_dt, data_type::s8, data_type::f16)
             || one_of(jcp.isa, avx2_vnni_2) || is_amx(jcp.isa));
 }
 
@@ -243,8 +242,7 @@ bool post_ops_ok(jit_brgemm_conv_conf_t &jcp, primitive_attr_t &attr,
             false /*sum_at_pos_0_only*/, false /*sum_requires_scale_one*/,
             false /*sum_requires_zp_zero*/, true /*sum_requires_same_params*/,
             {broadcasting_strategy_t::per_oc, broadcasting_strategy_t::scalar,
-                    broadcasting_strategy_t::no_broadcast,
-                    broadcasting_strategy_t::spatial}));
+                    broadcasting_strategy_t::no_broadcast}));
 }
 
 bool is_groups_ok(jit_brgemm_conv_conf_t &jcp) {
@@ -483,11 +481,6 @@ void brg_blocking_t::select_ic_block() {
         max_simd_blocks = saturate(1, max_simd_blocks,
                 static_cast<int>((L2 - out_size)
                         / ((wei_per_ic + inp_per_ic) * simd_w)));
-
-        // use nb_simd as max_simd_blocks for some shapes on avx2
-        // TODO: optimize max_simd_blocks
-        if (isa == avx2 && nb_simd <= 256 && (wei_per_ic + inp_per_ic < 1400))
-            max_simd_blocks = nb_simd;
 
         auto simd_blocks = 1;
         for (int nb_icb = nstl::min(max_simd_blocks, nb_simd); nb_icb >= 1;
@@ -1033,7 +1026,7 @@ void brg_blocking_t::iterate_ker_block(brg_blocking_t &best_brgb, int kd_block_,
                         1, od, int(L1 / (ihp * src_w_block_size)));
                 if (cur_od_block == 1)
                     cur_oh_block = utils::saturate(
-                            1, oh, static_cast<int>(L1 / src_w_block_size));
+                            1, oh, int(L1 / (src_w_block_size)));
             }
             for (; cur_od_block > 1; cur_od_block--) {
                 const auto sp_size = cur_od_block * cur_oh_block * iwp;
@@ -1045,17 +1038,14 @@ void brg_blocking_t::iterate_ker_block(brg_blocking_t &best_brgb, int kd_block_,
                 }
             }
             if (cur_od_block == 1) {
-                auto tmp_oh_block = cur_oh_block;
-                while (tmp_oh_block >= 1) {
-                    const auto sp_size = tmp_oh_block * iwp;
-                    if ((static_cast<float>(oh) / rnd_up(oh, tmp_oh_block))
+                for (; cur_oh_block > 1; cur_oh_block--) {
+                    const auto sp_size = cur_oh_block * iwp;
+                    if ((static_cast<float>(oh) / rnd_up(oh, cur_oh_block))
                                     > 0.9f
                             && sp_size > 128) {
                         L1_fit_res = true;
-                        cur_oh_block = tmp_oh_block;
                         break;
                     }
-                    tmp_oh_block--;
                 }
             }
             if (L1_fit_res) {
@@ -1666,14 +1656,11 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
 
     if (one_of(jcp.src_dt, u8, s8)) {
         jcp.acc_dt = s32;
-    } else if (one_of(jcp.src_dt, f32, bf16, f16, f8_e5m2, f8_e4m3)) {
+    } else if (one_of(jcp.src_dt, f32, bf16, f16)) {
         jcp.acc_dt = f32;
     } else
         return status::unimplemented;
 
-    jcp.is_fp8 = one_of(jcp.src_dt, f8_e5m2, f8_e4m3)
-            && one_of(jcp.wei_dt, f8_e5m2, f8_e4m3);
-    jcp.is_fp8_convert = jcp.is_fp8 && utils::one_of(isa, avx10_1_512_amx_fp16);
     jcp.src_dsz = types::data_type_size(jcp.src_dt);
     jcp.wei_dsz = types::data_type_size(jcp.wei_dt);
     jcp.dst_dsz = types::data_type_size(jcp.dst_dt);
@@ -1690,11 +1677,8 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     if (jcp.wei_plain)
         CHECK(pick_tags(jcp, src_md, weights_md, dst_md, bias_md));
 
-    const auto vnni_dt = jcp.prop_kind == prop_kind::backward_weights
-            ? jcp.dst_dt
-            : jcp.wei_dt;
-    const data_type_t vnni_block_dt = get_mac_emu_data_type(
-            vnni_dt, isa, isa == avx10_1_512 && !jcp.is_fp8_convert);
+    const data_type_t vnni_block_dt
+            = get_mac_emu_data_type(jcp.wei_dt, isa, isa == avx10_1_512);
     jcp.vnni_block = data_type_vnni_granularity(vnni_block_dt);
 
     if (one_of(jcp.prop_kind, prop_kind::forward_training,
@@ -1764,7 +1748,7 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
             && jcp.ow >= 128;
     if (one_of(jcp.prop_kind, prop_kind::forward_training,
                 prop_kind::forward_inference)
-            && (is_small_shape || is_3d_small_ic) && !jcp.is_fp8)
+            && (is_small_shape || is_3d_small_ic))
         VDISPATCH_CONV_IC(!allow_perf_heuristics(jcp),
                 VERBOSE_IMPL_HEURISTIC_FAIL,
                 "no optimization for fwd-prop and 3d shapes / small ic");
@@ -1790,6 +1774,9 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     VDISPATCH_CONV_IC(
             IMPLICATION(is_f32, one_of(isa, avx512_core, avx2) || jcp.is_bf32),
             VERBOSE_ISA_DT_MISMATCH);
+
+    VDISPATCH_CONV_IC(
+            post_ops_ok(jcp, attr, dst_d), VERBOSE_UNSUPPORTED_POSTOP);
 
     jcp.amx_h = 16;
     jcp.amx_w = 64 / (jcp.is_bf32 ? types::data_type_size(bf16) : jcp.src_dsz);
@@ -1832,16 +1819,9 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     if (!jcp.wei_plain && jcp.prop_kind != prop_kind::backward_weights) {
         // fast check data layout before spending time for blocking selection
         format_tag_t src_tag = pick(jcp.ndims - 3, nwc, nhwc, ndhwc);
-        const bool any_eligible = is_any_eligible(jcp);
-        CHECK(init_tag(jcp.src_tag, src_md, src_d, src_tag, any_eligible));
-        CHECK(init_tag(jcp.dst_tag, dst_md, dst_d, src_tag, any_eligible));
+        CHECK(init_tag(
+                jcp.src_tag, src_md, src_d, src_tag, is_any_eligible(jcp)));
     }
-
-    CHECK(attr.set_default_formats(&dst_md));
-
-    VDISPATCH_CONV_IC(
-            post_ops_ok(jcp, attr, dst_d), VERBOSE_UNSUPPORTED_POSTOP);
-
     if (jcp.with_bias) {
         if (bias_d.format_kind() == format_kind::any)
             CHECK(memory_desc_init_by_tag(bias_md, x));
@@ -1851,8 +1831,7 @@ status_t init_jcp(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     const auto kw_koef = jcp.is_relo() ? jcp.kw : 1;
     const auto kh_koef = jcp.is_relo_whi() ? jcp.kh : 1;
 
-    jcp.is_rd_padded_to_block = !jcp.is_1x1
-            && one_of(jcp.wei_dt, bf16, f16, s8, f8_e5m2, f8_e4m3)
+    jcp.is_rd_padded_to_block = !jcp.is_1x1 && one_of(jcp.wei_dt, bf16, f16, s8)
             && jcp.ic * kw_koef * kh_koef > rd_padded_block && is_amx(isa);
 
     jcp.idp = jcp.id + jcp.f_pad + jcp.back_pad;
@@ -1877,8 +1856,8 @@ void adjust_nthr(jit_brgemm_conv_conf_t &jcp, const memory_desc_wrapper &src_d,
     }
 }
 
-status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
-        const convolution_desc_t &cd, memory_desc_t &src_md,
+status_t init_conf(jit_brgemm_conv_conf_t &jcp, bool use_inversion,
+        cpu_isa_t isa, const convolution_desc_t &cd, memory_desc_t &src_md,
         memory_desc_t &weights_md, memory_desc_t &dst_md,
         memory_desc_t &bias_md, primitive_attr_t &attr, int nthreads) {
 
@@ -1904,8 +1883,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
 
     const bool with_groups = weights_d.ndims() == src_d.ndims() + 1;
 
-    // TODO: check these restrictions
-    if (is_amx(isa) && !jcp.is_fp8) {
+    if (is_amx(isa)) {
         // disabled for two convolutions from ssd_resnet34
         if ((jcp.ic == jcp.oc) && (jcp.ic == 128 || jcp.ic == 256)
                 && (jcp.oh == jcp.ow) && (jcp.oh == 150))
@@ -2025,7 +2003,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
         //TODO: support all 3d cases
         const bool relo_supported_shape = jcp.trans_dim_koef == 1
                 && IMPLICATION(jcp.id > 1, relo_conv_weights_wi == false)
-                && !cd.use_inversion && jcp.dilate_w == 0;
+                && !use_inversion && jcp.dilate_w == 0;
 
         const auto rnd_kwic = (float)jcp.kw * rnd_up(jcp.ic, jcp.simd_w);
         const auto src_per_ic
@@ -2055,10 +2033,8 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
     // try_relo_whi
     bool try_relo_whi = false;
     bool relo_conv_weights_whi = true;
-    if (!jcp.wei_plain && relo_supported_isa && relo_reasonable_isa
-            && !jcp.is_fp8) {
+    if (!jcp.wei_plain && relo_supported_isa && relo_reasonable_isa) {
         const int rd_whi = jcp.kh * jcp.kw * jcp.ic;
-        //TODO: support fp8
         if (jcp.ic % jcp.vnni_block == 0
                 && IMPLICATION(rd_whi > jcp.simd_w, rd_whi % jcp.simd_w == 0)
                 && one_of(1, jcp.kh, jcp.kw))
@@ -2066,7 +2042,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
         //TODO: support 3d cases
         const bool relo_supported_shape
                 = everyone_is(0, jcp.dilate_h, jcp.dilate_w)
-                && jcp.trans_dim_koef == 1 && jcp.ndims < 5 && !cd.use_inversion
+                && jcp.trans_dim_koef == 1 && jcp.ndims < 5 && !use_inversion
                 && IMPLICATION(jcp.s8s8_compensation_required,
                         everyone_is(0, jcp.t_pad, jcp.b_pad));
 
@@ -2134,8 +2110,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
 
         const auto rd_ksize = (jcp.is_relo() ? jcp.kw : 1)
                 * (jcp.is_relo_whi() ? jcp.kh : 1);
-        jcp.is_rd_padded_to_block
-                = one_of(jcp.wei_dt, bf16, f16, s8, f8_e5m2, f8_e4m3)
+        jcp.is_rd_padded_to_block = one_of(jcp.wei_dt, bf16, f16, s8)
                 && jcp.ic * rd_ksize > rd_padded_block;
 
         jcp.is_os_blocking = jcp.f_pad < jcp.kd && jcp.back_pad < jcp.kd
@@ -2177,6 +2152,18 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
         // TODO: remove this restriction
         const auto iw_block = (jcp.ow_block - 1) * jcp.stride_w + 1;
         if (!must_exec_vpad && (iw_block > jcp.iw)) try_exec_type_res = false;
+
+        const dim_t work_amount = static_cast<dim_t>(jcp.mb) * jcp.ngroups
+                * jcp.nb_oc * jcp.nb_od * jcp.nb_oh * jcp.nb_ow;
+        const dim_t thr_work_amount = static_cast<dim_t>(jcp.oc_block) * jcp.ic
+                * jcp.od_block * jcp.oh_block * jcp.ow_block;
+        // Disable exec_vpad for large shapes on avx2 for better performance
+        // the threshold is approximate and empiric
+        if (!must_exec_vpad && jcp.isa == avx2 && work_amount >= jcp.nthr * 8
+                && jcp.ic >= 512 && jcp.oc >= 256
+                && thr_work_amount > 2 * brg_blocking_t::L1
+                && jcp.prop_kind == prop_kind::forward)
+            try_exec_type_res = false;
     }
     if (try_exec_base && try_exec_type_res == false) {
         jcp.exec_type = exec_base;
@@ -2208,13 +2195,27 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
             !(jcp.ow_block == 0 || jcp.ic_block == 0 || jcp.oc_block == 0),
             VERBOSE_BLOCKING_FAIL, "bad blocking dimensions");
 
-    // Dispatch the shape to VNNI for better performance on AMX
-    const bool is_int8_small_ic = jcp.oc == 32 && jcp.ic < jcp.simd_w / 2
-            && is_int8_convolution && is_amx(jcp.isa)
-            && everyone_is(640, jcp.oh, jcp.ow, jcp.ih, jcp.iw)
-            && everyone_is(3, jcp.kh, jcp.kw);
-    VDISPATCH_CONV_IC(!is_int8_small_ic, VERBOSE_IMPL_HEURISTIC_FAIL,
-            "Dispatch the shape that has small ic/oc to VNNI");
+    // Dispatch the shape that requires large or small cache to JIT
+    // for better performance on AVX2
+    // The threshold is empirical
+    const size_t w_cache_sz
+            = static_cast<size_t>(jcp.src_dsz) * jcp.ic_block * jcp.iwp
+            + jcp.dst_dsz * jcp.ow * jcp.oc_block;
+    const size_t wei_cache_sz = static_cast<size_t>(jcp.wei_dsz) * jcp.kd_block
+            * jcp.kh_block * jcp.kw_block * jcp.ic_block * jcp.oc_block;
+    const size_t nthr_work_amount
+            = div_up(static_cast<size_t>(jcp.mb) * jcp.ngroups * jcp.nb_od
+                            * jcp.nb_oh * jcp.nb_ow * jcp.nb_oc,
+                    jcp.nthr);
+    const bool req_large_cache = jcp.oc >= 256 && jcp.ic >= 256
+            && nstl::max(w_cache_sz, wei_cache_sz) * nthr_work_amount
+                    >= brg_blocking_t::L2 * 10;
+    const bool req_small_cache = jcp.ic <= jcp.acc_simd_w
+            && nstl::max(w_cache_sz, wei_cache_sz) <= 2048;
+    VDISPATCH_CONV_IC(
+            !((req_large_cache || req_small_cache) && jcp.isa == avx2),
+            VERBOSE_IMPL_HEURISTIC_FAIL,
+            "Dispatch the shape that requires large/small cache size to jit");
 
     // to avoid cache concurrent write access from different threads
     size_t sc_size = sizeof(brgemm_batch_element_t);
@@ -2223,6 +2224,7 @@ status_t init_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
 
     if (!jcp.wei_plain)
         CHECK(pick_tags(jcp, src_md, weights_md, dst_md, bias_md));
+    CHECK(attr.set_default_formats(&dst_md));
 
     jcp.buffer_size = jcp.LDC * jcp.M;
 
@@ -2428,6 +2430,28 @@ status_t init_1x1_conf(jit_brgemm_conv_conf_t &jcp, cpu_isa_t isa,
 
     VDISPATCH_CONV_IC(!(jcp.ic_block == 0 || jcp.oc_block == 0),
             VERBOSE_BLOCKING_FAIL, "bad blocking dimensions");
+
+    // Dispatch the shape that requires large or small cache to JIT
+    // for better performance on AVX2
+    // The threshold is empirical
+    const size_t w_cache_sz
+            = static_cast<size_t>(jcp.src_dsz) * jcp.ic_block * jcp.iwp
+            + jcp.dst_dsz * jcp.ow * jcp.oc_block;
+    const size_t wei_cache_sz = static_cast<size_t>(jcp.wei_dsz) * jcp.kd_block
+            * jcp.kh_block * jcp.kw_block * jcp.ic_block * jcp.oc_block;
+    const size_t nthr_work_amount
+            = div_up(static_cast<size_t>(jcp.mb) * jcp.ngroups * jcp.nb_od
+                            * jcp.nb_oh * jcp.nb_ow * jcp.nb_oc,
+                    jcp.nthr);
+    const bool req_large_cache = jcp.oc >= 256 && jcp.ic >= 256
+            && nstl::max(w_cache_sz, wei_cache_sz) * nthr_work_amount
+                    >= brg_blocking_t::L2 * 10;
+    const bool req_small_cache = jcp.ic <= jcp.acc_simd_w
+            && nstl::max(w_cache_sz, wei_cache_sz) <= 2048;
+    VDISPATCH_CONV_IC(
+            !((req_large_cache || req_small_cache) && jcp.isa == avx2),
+            VERBOSE_IMPL_HEURISTIC_FAIL,
+            "Dispatch the shapes that requie large cache size to jit");
 
     // Configure matrix sizes
 
@@ -2958,11 +2982,7 @@ status_t init_conf_bwd_w(jit_brgemm_conv_conf_t &jcp,
 
     const bool is_f16 = src_d.data_type() == data_type::f16;
 
-    const auto is_fp8 = one_of(src_d.data_type(), f8_e5m2, f8_e4m3)
-            && one_of(diff_weights_d.data_type(), f32, f16, f8_e5m2, f8_e4m3)
-            && one_of(diff_dst_d.data_type(), f8_e5m2, f8_e4m3);
-
-    jcp.isa = is_f16 || is_fp8 ? avx512_core_amx_fp16 : avx512_core_amx;
+    jcp.isa = is_f16 ? avx512_core_amx_fp16 : avx512_core_amx;
     // disabling verbose dispatch messages for unsupported isa for better readability
     if (!mayiuse(jcp.isa)) return status::unimplemented;
 
@@ -2997,7 +3017,7 @@ status_t init_conf_bwd_w(jit_brgemm_conv_conf_t &jcp,
             && everyone_is(0, jcp.f_pad, jcp.back_pad, jcp.t_pad, jcp.b_pad))
         jcp.var_bs = false;
 
-    jcp.typesize_in = jcp.src_dsz;
+    jcp.typesize_in = sizeof(bfloat16_t);
     jcp.typesize_out = sizeof(float);
 
     bool ok = true
@@ -3046,27 +3066,18 @@ status_t init_conf_bwd_w(jit_brgemm_conv_conf_t &jcp,
         jcp.dst_tag = diff_dst_d.matches_one_of_tag(jcp.src_tag);
     VDISPATCH_CONV_IC(jcp.dst_tag == jcp.src_tag, VERBOSE_UNSUPPORTED_TAG);
 
-    jcp.wei_dt = diff_weights_d.data_type();
-
     const int wei_format_tag = 2 * ndims - 6 + with_groups;
     format_tag_t wei_tag;
-    if (jcp.transform_to_vnni) {
-        if (one_of(jcp.wei_dt, f8_e5m2, f8_e4m3))
-            wei_tag = pick(wei_format_tag, format_tag::OIw16i16o4i,
-                    format_tag::gOIw16i16o4i, format_tag::OIhw16i16o4i,
-                    format_tag::gOIhw16i16o4i, format_tag::OIdhw16i16o4i,
-                    format_tag::gOIdhw16i16o4i);
-        else
-            wei_tag = pick(wei_format_tag, format_tag::OIw16i16o2i,
-                    format_tag::gOIw16i16o2i, format_tag::OIhw16i16o2i,
-                    format_tag::gOIhw16i16o2i, format_tag::OIdhw16i16o2i,
-                    format_tag::gOIdhw16i16o2i);
-    } else {
+    if (jcp.transform_to_vnni)
+        wei_tag = pick(wei_format_tag, format_tag::OIw16i16o2i,
+                format_tag::gOIw16i16o2i, format_tag::OIhw16i16o2i,
+                format_tag::gOIhw16i16o2i, format_tag::OIdhw16i16o2i,
+                format_tag::gOIdhw16i16o2i);
+    else
         wei_tag = pick(wei_format_tag, format_tag::OIw16i16o,
                 format_tag::gOIw16i16o, format_tag::OIhw16i16o,
                 format_tag::gOIhw16i16o, format_tag::OIdhw16i16o,
                 format_tag::gOIdhw16i16o);
-    }
     if (diff_weights_md.format_kind == format_kind::any) {
         CHECK(memory_desc_init_by_tag(diff_weights_md, wei_tag));
         jcp.wei_tag = wei_tag;
@@ -3075,6 +3086,7 @@ status_t init_conf_bwd_w(jit_brgemm_conv_conf_t &jcp,
         VDISPATCH_CONV_IC(
                 jcp.wei_tag == wei_tag, VERBOSE_UNSUPPORTED_TAG_S, "weights");
     }
+    jcp.wei_dt = diff_weights_d.data_type();
 
     /* kernel applicability check wrt boundaries
      * the conditions are quite general across the kernels we have,
@@ -3116,7 +3128,7 @@ status_t init_conf_bwd_w(jit_brgemm_conv_conf_t &jcp,
                         tr_round)
             * jcp.stride_w;
 
-    // TODO: xf16 or fp8 training is supported only
+    // TODO: xf16 training is supported only
     const auto rnd_val = jcp.vnni_block;
     jcp.tr_src_num_guard_elems = tr_pad; // upper bound
     jcp.tr_ow = rnd_up(jcp.ow, rnd_val);

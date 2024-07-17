@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2022-2024 Intel Corporation
+* Copyright 2022-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@
 #include "gpu/sycl/sycl_post_ops.hpp"
 #include "gpu/sycl/sycl_primitive_conf.hpp"
 #include "gpu/sycl/sycl_q10n.hpp"
+#include "gpu/sycl/sycl_types.hpp"
 #include "sycl/sycl_stream.hpp"
-#include "xpu/sycl/types.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -39,7 +39,7 @@ struct ref_binary_t : public sycl_gpu_primitive_t {
 
         DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_binary_t);
 
-        status_t init(impl::engine_t *engine) {
+        status_t init(engine_t *engine) {
             using namespace data_type;
             using sm = primitive_attr_t::skip_mask_t;
 
@@ -48,15 +48,26 @@ struct ref_binary_t : public sycl_gpu_primitive_t {
             const memory_desc_wrapper dst_d(dst_md());
 
             const bool ok = set_default_params() == status::success
-                    && attr_.set_default_formats(dst_md()) == status::success
                     && check_data_types(src0_d, src1_d, dst_d)
-                    && check_formats(src0_d, src1_d, dst_d)
+                    && check_formats(src0_d, src1_d, dst_d) && is_tensor_op()
                     && attr()->has_default_values(
                             sm::scales_runtime | sm::post_ops)
                     && IMPLICATION(!attr()->scales_.has_default_values(),
                             check_scales_mask())
                     && post_ops_ok();
             if (!ok) return status::unimplemented;
+            // TODO: extend sycl device info to check supported sub-group sizes.
+            auto *sycl_engine
+                    = utils::downcast<impl::sycl::sycl_engine_base_t *>(engine);
+            const auto supported_sub_group_sizes
+                    = sycl_engine->device()
+                              .template get_info<
+                                      ::sycl::info::device::sub_group_sizes>();
+            if (!std::any_of(supported_sub_group_sizes.cbegin(),
+                        supported_sub_group_sizes.cend(),
+                        [](size_t size) { return size == 32; })) {
+                return status::unimplemented;
+            }
 
             return init_conf();
         }
@@ -73,12 +84,18 @@ struct ref_binary_t : public sycl_gpu_primitive_t {
         }
 
         bool post_ops_ok() const {
-            // Dw conv post-ops are not supported.
+            for (int i = 0; i < attr()->post_ops_.len(); i++) {
+                const auto &e = attr()->post_ops_.entry_[i];
+                if (!IMPLICATION(e.is_eltwise(),
+                            utils::one_of(e.eltwise.alg, alg_kind::eltwise_relu,
+                                    alg_kind::eltwise_linear))) {
+                    return false;
+                }
+            }
+            // Binary, prelu and dw conv post-ops are not supported.
             return attr()->post_ops_.len() <= sycl_post_ops_t::max_post_ops
                     && attr()->post_ops_.has_default_values(
-                            {primitive_kind::eltwise, primitive_kind::binary,
-                                    primitive_kind::prelu,
-                                    primitive_kind::sum});
+                            {primitive_kind::eltwise});
         }
 
         static bool check_data_types(const memory_desc_wrapper &src0,
@@ -95,7 +112,7 @@ struct ref_binary_t : public sycl_gpu_primitive_t {
             }
 
             return IMPLICATION(utils::one_of(bf16, src0_dt, src1_dt, dst_dt),
-                    src0_dt == dst_dt && src1_dt == dst_dt);
+                    src0_dt == src1_dt == dst_dt);
         }
 
         static bool check_formats(const memory_desc_wrapper &src0,
@@ -104,18 +121,20 @@ struct ref_binary_t : public sycl_gpu_primitive_t {
             using namespace format_tag;
 
             for (const auto &mdw : {src0, src1, dst}) {
-                if (!mdw.is_plain()) { return false; }
+                if (mdw.matches_one_of_tag(ab, abc, abcd, abcde) == undef) {
+                    return false;
+                }
             }
             return true;
         }
     };
 
-    status_t init(impl::engine_t *engine) override;
+    status_t init(engine_t *engine) override;
     status_t execute(const exec_ctx_t &ctx) const override;
 
 private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
-    intel::compute::kernel_t kernel_;
+    compute::kernel_t kernel_;
 };
 
 } // namespace sycl

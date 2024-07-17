@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2019-2024 Intel Corporation
+* Copyright 2019-2022 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@
 #include "common/c_types_map.hpp"
 #include "common/engine.hpp"
 #include "common/utils.hpp"
-#include "gpu/intel/sycl/utils.hpp"
 #include "sycl/sycl_engine_base.hpp"
+#include "sycl/sycl_utils.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -46,9 +46,8 @@ public:
                 storage, flags, size, handle);
     }
 
-    status_t create_stream(impl::stream_t **stream,
-            impl::stream_impl_t *stream_impl) override {
-        return sycl_engine_base_t::create_stream(stream, stream_impl);
+    status_t create_stream(stream_t **stream, unsigned flags) override {
+        return sycl_engine_base_t::create_stream(stream, flags);
     }
 
     const impl_list_item_t *get_reorder_implementation_list(

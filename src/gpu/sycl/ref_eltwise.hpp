@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2023-2024 Intel Corporation
+* Copyright 2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 #include "gpu/sycl/sycl_gpu_primitive.hpp"
 #include "gpu/sycl/sycl_post_ops.hpp"
 #include "gpu/sycl/sycl_primitive_conf.hpp"
-#include "xpu/sycl/types.hpp"
+#include "gpu/sycl/sycl_types.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -36,7 +36,7 @@ struct ref_sycl_eltwise_fwd_t : public sycl_gpu_primitive_t {
 
         DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_sycl_eltwise_fwd_t);
 
-        status_t init(impl::engine_t *engine) {
+        status_t init(engine_t *engine) {
             using sm = primitive_attr_t::skip_mask_t;
 
             const memory_desc_wrapper src_d(src_md());
@@ -95,7 +95,7 @@ struct ref_sycl_eltwise_fwd_t : public sycl_gpu_primitive_t {
         }
     };
 
-    status_t init(impl::engine_t *engine) override;
+    status_t init(engine_t *engine) override;
     status_t execute(const exec_ctx_t &ctx) const override {
         return execute_forward(ctx);
     }
@@ -103,7 +103,7 @@ struct ref_sycl_eltwise_fwd_t : public sycl_gpu_primitive_t {
 private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
     status_t execute_forward(const exec_ctx_t &ctx) const;
-    intel::compute::kernel_t kernel_;
+    compute::kernel_t kernel_;
 };
 
 struct ref_sycl_eltwise_bwd_t : public sycl_gpu_primitive_t {
@@ -114,7 +114,7 @@ struct ref_sycl_eltwise_bwd_t : public sycl_gpu_primitive_t {
 
         DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_sycl_eltwise_bwd_t);
 
-        status_t init(impl::engine_t *engine) {
+        status_t init(engine_t *engine) {
             using namespace data_type;
 
             const memory_desc_wrapper diff_src_d(diff_src_md());
@@ -150,7 +150,7 @@ struct ref_sycl_eltwise_bwd_t : public sycl_gpu_primitive_t {
         }
     };
 
-    status_t init(impl::engine_t *engine) override;
+    status_t init(engine_t *engine) override;
     status_t execute(const exec_ctx_t &ctx) const override {
         return execute_backward(ctx);
     }
@@ -158,7 +158,7 @@ struct ref_sycl_eltwise_bwd_t : public sycl_gpu_primitive_t {
 private:
     status_t execute_backward(const exec_ctx_t &ctx) const;
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
-    intel::compute::kernel_t kernel_;
+    compute::kernel_t kernel_;
 };
 
 } // namespace sycl

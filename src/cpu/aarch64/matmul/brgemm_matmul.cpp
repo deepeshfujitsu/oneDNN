@@ -1,6 +1,7 @@
 /*******************************************************************************
 * Copyright 2021-2023 Intel Corporation
 * Copyright 2024 FUJITSU LIMITED
+*
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
 * You may obtain a copy of the License at
@@ -59,7 +60,8 @@ status_t brgemm_matmul_t<isa>::pd_t::init(engine_t *engine) {
 
     auto check_bias = [&]() -> bool {
         const auto bia_dt = weights_md(1)->data_type;
-
+        // The cause in IMPLICATION should be an expression to work around
+        // ICE in GCC 7.4.
         const bool is_bia_dt_correct
                 = IMPLICATION(is_int8 == true,
                           one_of(bia_dt, f32, s32, s8, u8, bf16))
@@ -77,9 +79,16 @@ status_t brgemm_matmul_t<isa>::pd_t::init(engine_t *engine) {
             // This case requires scratchpad
             if (N() == DNNL_RUNTIME_DIM_VAL) ok = false;
         }
-
-        if (!attr()->post_ops_.sum_with_default_dt()) return false;
-
+        // if (!mayiuse(sve_512) && (!attr()->scales_.get(DNNL_ARG_SRC).has_default_values()
+        //         || !attr()->scales_.get(DNNL_ARG_WEIGHTS).has_default_values()
+        //         || !attr()->scales_.get(DNNL_ARG_DST).has_default_values())) {
+        //     return false;
+        // }
+        // if(!attr()->post_ops_.has_default_values())
+        //         return false;
+        if(!attr()->post_ops_.sum_with_default_dt())
+                return false;
+        
         return ok;
     };
 
@@ -110,6 +119,7 @@ status_t brgemm_matmul_t<isa>::pd_t::init(engine_t *engine) {
             VERBOSE_UNSUPPORTED_ATTR);
     VDISPATCH_MATMUL(attr()->post_ops_.check_sum_consistency(dst_dt, is_int8),
             VERBOSE_UNSUPPORTED_DT);
+
     VDISPATCH_MATMUL(check_attr_scales(), VERBOSE_UNSUPPORTED_SCALES_CFG);
     VDISPATCH_MATMUL(check_attr_zero_points(), VERBOSE_UNSUPPORTED_ZP_CFG);
     VDISPATCH_MATMUL(check_bias(), VERBOSE_UNSUPPORTED_BIAS_CFG);
@@ -123,7 +133,6 @@ status_t brgemm_matmul_t<isa>::pd_t::init(engine_t *engine) {
 
     const int max_m_ker_idx
             = bgmmc_.is_runtime_M ? max_num_dynamic_m_tails + 1 : 2;
-
     assert(!is_bf16);
     const auto backup_isa = isa;
     for_(int i_bs = 0; i_bs < 2; i_bs++)
@@ -166,15 +175,18 @@ status_t brgemm_matmul_t<isa>::pd_t::init(engine_t *engine) {
     init_scratchpad(scratchpad, bgmmc_);
     book_precomputed_scales(scratchpad, attr()->scales_, N());
 
-    const bool is_B_transposed = one_of(bgmmc_.wei_tag, abdc, ba, acb, adbc,
-            abced, abcdfe, abcdegf, abcdefhg, abcdefgih, abcdefghji,
-            abcdefghikj, abcdefghijlk);
+    const bool is_B_transposed
+        = one_of(bgmmc_.wei_tag,abdc, ba, acb,  adbc, abced, abcdfe, abcdegf,
+                abcdefhg, abcdefgih, abcdefghji, abcdefghikj, abcdefghijlk);
 
-    const bool is_A_transposed = one_of(bgmmc_.src_tag, abdc, ba, acb, adbc,
-            abced, abcdfe, abcdegf, abcdefhg, abcdefgih, abcdefghji,
-            abcdefghikj, abcdefghijlk);
+        if(mayiuse(sve_512) && is_B_transposed)
+                return status::unimplemented;
+        
+    const bool is_A_transposed
+        = one_of(bgmmc_.src_tag,abdc, ba, acb,  adbc, abced, abcdfe, abcdegf,
+                abcdefhg, abcdefgih, abcdefghji, abcdefghikj, abcdefghijlk);
 
-    if ((mayiuse(sve_512) && is_B_transposed) || is_A_transposed)
+    if(is_A_transposed)
         return status::unimplemented;
 
     return status::success;
@@ -225,6 +237,7 @@ status_t brgemm_matmul_t<isa>::execute_body(const exec_ctx_t &ctx) const {
     DEFINE_ARG_SCALES_BUFFER(src_scales, DNNL_ARG_SRC);
     DEFINE_ARG_SCALES_BUFFER(wei_scales, DNNL_ARG_WEIGHTS);
     DEFINE_ARG_SCALES_BUFFER(dst_scales, DNNL_ARG_DST);
+
 
     const auto src_d = ctx.memory_mdw(DNNL_ARG_SRC, pd()->src_md());
     const auto weights_d = ctx.memory_mdw(DNNL_ARG_WEIGHTS, pd()->weights_md());
@@ -363,8 +376,8 @@ void brgemm_matmul_t<isa>::compute_kernel(
                 ithr, 0, gemm_batch, b_idx, m_blk_idx, k_blk_idx, n_blk_idx);
 
         if (post_ops_applicable && is_last_K_chunk && !is_K_tail) {
-            void *scratch = static_cast<void *>(
-                    brgmm_ctx.get_s8s8_comp_ptr(ithr, b_idx, n_blk_idx));
+            void *scratch = static_cast<void *>(brgmm_ctx.get_s8s8_comp_ptr(
+                            ithr, b_idx, n_blk_idx));
 
             const size_t dst_row_logical_off
                     = brgmm_ctx.get_M_idx(m_blk_idx, true);
@@ -391,8 +404,8 @@ void brgemm_matmul_t<isa>::compute_kernel(
             brgemm_kernel_execute_postops(brg_kernel, gemm_batch, addr_batch,
                     (void *)ptr_C, (void *)ptr_D, post_ops_data, scratch);
         } else {
-            brgemm_kernel_execute(
-                    brg_kernel, gemm_batch, addr_batch, (void *)ptr_C, nullptr);
+            brgemm_kernel_execute(brg_kernel, gemm_batch, addr_batch,
+                    (void *)ptr_C, nullptr);
         }
     }
     if (is_K_tail) {
@@ -406,8 +419,8 @@ void brgemm_matmul_t<isa>::compute_kernel(
         const auto brg_kernel_k_tail = brg_kernels_[brg_ker_idx].get();
 
         if (post_ops_applicable) {
-            void *scratch = static_cast<void *>(
-                    brgmm_ctx.get_s8s8_comp_ptr(ithr, b_idx, n_blk_idx));
+            void *scratch = static_cast<void *>(brgmm_ctx.get_s8s8_comp_ptr(
+                            ithr, b_idx, n_blk_idx));
 
             const size_t dst_row_logical_off
                     = brgmm_ctx.get_M_idx(m_blk_idx, true);
@@ -434,8 +447,8 @@ void brgemm_matmul_t<isa>::compute_kernel(
             brgemm_kernel_execute_postops(brg_kernel_k_tail, 1, addr_batch,
                     (void *)ptr_C, (void *)ptr_D, post_ops_data, scratch);
         } else {
-            brgemm_kernel_execute(
-                    brg_kernel_k_tail, 1, addr_batch, (void *)ptr_C, nullptr);
+            brgemm_kernel_execute(brg_kernel_k_tail, 1, addr_batch,
+                    (void *)ptr_C, nullptr);
         }
     }
 
@@ -642,8 +655,8 @@ void brgemm_matmul_t<isa>::copy_b_chunk_in_buffer(
                 = (void *)brgmm_ctx.get_s8s8_comp_ptr(ithr, b_idx, n_blk_idx);
         ctx.current_K_start = k;
         ctx.current_K_iters = nstl::min(bgmmc.K_blk, bgmmc.K);
-        assert(isa == sve_512);
-        (*copy_B_kernel_)(&ctx);
+	assert(isa == sve_512);
+	(*copy_B_kernel_)(&ctx);
     }
 
     if (is_K_tail) {
@@ -654,8 +667,8 @@ void brgemm_matmul_t<isa>::copy_b_chunk_in_buffer(
                 = (void *)brgmm_ctx.get_s8s8_comp_ptr(ithr, b_idx, n_blk_idx);
         ctx.current_K_start = k;
         ctx.current_K_iters = bgmmc.K % bgmmc.K_blk;
-        assert(isa == sve_512);
-        (*copy_B_kernel_)(&ctx);
+	assert(isa == sve_512);
+	(*copy_B_kernel_)(&ctx);
     }
 }
 
@@ -1221,7 +1234,9 @@ struct brgemm_matmul_t<isa>::brg_matmul_exec_ctx_t {
                 + m_blk_local * bgmmc_.zp_b_comp_buffer_shift_m;
     }
 
-    char *get_tile_workspace(int ithr) const { return nullptr; }
+    char *get_tile_workspace(int ithr) const {
+        return nullptr;
+    }
 
     const std::vector<const void *> &get_post_ops_binary_rhs_arg_vec() const {
         return post_ops_binary_rhs_arg_vec_;

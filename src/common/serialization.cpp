@@ -48,7 +48,6 @@ status_t serialize_desc(
         CASE(reorder)
         CASE(resampling)
         CASE(rnn)
-        CASE(sdpa)
         CASE(shuffle)
         CASE(softmax)
         CASE(sum)
@@ -307,8 +306,6 @@ void serialize_desc(
     sstream.write(desc.padding[1], DNNL_MAX_NDIMS);
     // Accumulator type
     sstream.write(&desc.accum_data_type);
-    // Internal member
-    sstream.write(&desc.use_inversion);
 }
 
 // Eltwise
@@ -585,18 +582,6 @@ void serialize_desc(serialization_stream_t &sstream, const sum_desc_t &desc) {
     // Array of mds
     for (int i = 0; i < desc.n; i++)
         serialize_md(sstream, *desc.src_mds[i]);
-}
-
-void serialize_desc(serialization_stream_t &sstream, const sdpa_desc_t &desc) {
-    // Kind
-    sstream.write(&desc.primitive_kind);
-    serialize_md(sstream, desc.q_desc);
-    serialize_md(sstream, desc.k_desc);
-    serialize_md(sstream, desc.v_desc);
-    serialize_md(sstream, desc.dst_desc);
-    serialize_md(sstream, desc.attn_mask_desc);
-    sstream.write(&desc.scale_dt);
-    sstream.write(&desc.invert_scale);
 }
 
 } // namespace serialization

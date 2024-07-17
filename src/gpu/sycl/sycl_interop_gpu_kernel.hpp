@@ -19,29 +19,29 @@
 
 #include <string>
 
-#include "gpu/intel/sycl/utils.hpp"
+#include "sycl/sycl_utils.hpp"
 
 namespace dnnl {
 namespace impl {
 namespace gpu {
 namespace sycl {
 
-class sycl_interop_gpu_kernel_t : public gpu::intel::compute::kernel_impl_t {
+class sycl_interop_gpu_kernel_t : public gpu::compute::kernel_impl_t {
 public:
     sycl_interop_gpu_kernel_t(const ::sycl::kernel &sycl_kernel,
-            const std::vector<gpu::intel::compute::scalar_type_t> &arg_types)
+            const std::vector<gpu::compute::scalar_type_t> &arg_types)
         : sycl_kernel_(new ::sycl::kernel(sycl_kernel))
         , arg_types_(arg_types) {}
 
     ::sycl::kernel sycl_kernel() const { return *sycl_kernel_; }
 
-    status_t parallel_for(impl::stream_t &stream,
-            const gpu::intel::compute::nd_range_t &range,
-            const gpu::intel::compute::kernel_arg_list_t &arg_list,
-            const xpu::event_t &deps, xpu::event_t &out_dep) override;
+    status_t parallel_for(stream_t &stream,
+            const gpu::compute::nd_range_t &range,
+            const gpu::compute::kernel_arg_list_t &arg_list,
+            const gpu::compute::event_t &deps,
+            gpu::compute::event_t &out_dep) override;
 
-    const std::vector<gpu::intel::compute::scalar_type_t> &
-    arg_types() const override {
+    const std::vector<gpu::compute::scalar_type_t> &arg_types() const override {
         return arg_types_;
     }
 
@@ -52,7 +52,7 @@ public:
 
 private:
     std::unique_ptr<::sycl::kernel> sycl_kernel_;
-    std::vector<gpu::intel::compute::scalar_type_t> arg_types_;
+    std::vector<gpu::compute::scalar_type_t> arg_types_;
 };
 
 } // namespace sycl

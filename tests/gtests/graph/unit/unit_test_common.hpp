@@ -24,7 +24,6 @@
 #include "common/engine.hpp"
 #include "common/stream.hpp"
 #include "common/type_helpers.hpp"
-#include "common/utils.hpp"
 
 #include "graph/interface/c_types_map.hpp"
 #include "graph/interface/partition_cache.hpp"
@@ -33,7 +32,7 @@
 #include "tests/gtests/dnnl_test_common.hpp"
 
 #ifdef DNNL_WITH_SYCL
-#include "gpu/intel/sycl/compat.hpp"
+#include "sycl/sycl_compat.hpp"
 #if __has_include(<sycl/sycl.hpp>)
 #include <sycl/sycl.hpp>
 #elif __has_include(<CL/sycl.hpp>)
@@ -45,10 +44,6 @@
 
 #if DNNL_CPU_RUNTIME == DNNL_RUNTIME_THREADPOOL
 #include "test_thread.hpp"
-#endif
-
-#if DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-#include "gpu/intel/ocl/ocl_engine.hpp"
 #endif
 
 #include "tests/gtests/dnnl_test_macros.hpp"
@@ -102,15 +97,8 @@ private:
                 } else if (k == dnnl::impl::graph::engine_kind::gpu) {
 #if DNNL_GPU_RUNTIME == DNNL_RUNTIME_SYCL
                     alc->deallocate(p, get_device(), get_context(), {});
-#elif DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-                    const auto *ocl_engine = dnnl::impl::utils::downcast<
-                            const dnnl::impl::gpu::intel::ocl::ocl_gpu_engine_t
-                                    *>(eng_);
-                    auto dev = ocl_engine->device();
-                    auto ctx = ocl_engine->context();
-                    alc->deallocate(p, dev, ctx, {});
 #else
-                    assert(!"only sycl and ocl runtime is supported on gpu");
+                    assert(!"only sycl runtime is supported on gpu");
 #endif
                 } else {
                     assert(!"unknown engine kind");
@@ -141,16 +129,8 @@ private:
             data.reset(static_cast<char *>(alc->allocate(
                                size, get_device(), get_context())),
                     deletor_wrapper {e});
-#elif DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-            const auto *ocl_engine = dnnl::impl::utils::downcast<
-                    const dnnl::impl::gpu::intel::ocl::ocl_gpu_engine_t *>(e);
-            auto dev = ocl_engine->device();
-            auto ctx = ocl_engine->context();
-
-            data.reset(static_cast<char *>(alc->allocate(size, dev, ctx)),
-                    deletor_wrapper {e});
 #else
-            assert(!"only sycl and ocl runtime is supported on gpu");
+            assert(!"not supported non-sycl for GPU");
 #endif
         }
         return data;

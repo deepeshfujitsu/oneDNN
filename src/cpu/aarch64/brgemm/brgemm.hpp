@@ -1,6 +1,6 @@
 /*******************************************************************************
 * Copyright 2020-2023 Intel Corporation
-* Copyright 2023 FUJITSU LIMITED
+* Copyright 2024 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -141,6 +141,12 @@ status_t DNNL_API brgemm_kernel_destroy(brgemm_kernel_t *brg_kernel);
 ///     Only BRGEMM kernel will be executed even if post-ops are added to BRGEMM
 ///     descriptor
 ///
+/// @note
+///     In row major mode matrix B (matrix A for column major) is expected to be
+///     in a VNNI-friendly format, which requires 4 consecutive elements of K
+///     dimension for int8 data type, 2 elements for bfloat16 data type and no
+///     requirements for f32 and f16 data types.
+///
 /// @param brg_kernel BRGEMM kernel
 /// @param bs Specifies the size of batch
 /// @param batch Array of batch elements containing pointers to matrices
@@ -219,8 +225,8 @@ void DNNL_API brgemm_kernel_execute_postops(const brgemm_kernel_t *brg_kernel,
 ///     phase
 /// @param scratch Scratchpad memory needed in several scenarios
 ///
-void DNNL_API brgemm_kernel_execute_postops(const brgemm_kernel_t *brg_kernel,
-        int bs, const void *addr_A, const void *addr_B,
+void brgemm_kernel_execute_postops(const brgemm_kernel_t *brg_kernel, int bs,
+        const void *addr_A, const void *addr_B,
         const brgemm_batch_element_t *batch, void *ptr_C, void *ptr_D,
         const brgemm_post_ops_data_t &post_ops_data, void *scratch = nullptr);
 

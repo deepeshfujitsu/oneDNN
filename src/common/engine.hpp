@@ -19,9 +19,11 @@
 
 #include "oneapi/dnnl/dnnl.h"
 
+#if DNNL_CPU_RUNTIME == DNNL_RUNTIME_THREADPOOL
+#include "oneapi/dnnl/dnnl_threadpool_iface.hpp"
+#endif
+
 #include "c_types_map.hpp"
-#include "common/engine_impl.hpp"
-#include "common/stream_impl.hpp"
 #include "engine_id.hpp"
 #include "memory.hpp"
 #include "memory_storage.hpp"
@@ -47,22 +49,25 @@
  *   - Provide engine specific primitive_desc_t creators
  */
 struct dnnl_engine : public dnnl::impl::c_compatible {
-    dnnl_engine(dnnl::impl::engine_impl_t *impl) : impl_(impl), counter_(1) {}
+    dnnl_engine(dnnl::impl::engine_kind_t kind,
+            dnnl::impl::runtime_kind_t runtime_kind, size_t index)
+        : kind_(kind)
+        , runtime_kind_(runtime_kind)
+        , index_(index)
+        , counter_(1) {}
 
     /** get kind of the current engine */
-    dnnl::impl::engine_kind_t kind() const { return impl()->kind(); }
+    dnnl::impl::engine_kind_t kind() const { return kind_; }
 
     /** get the runtime kind of the current engine */
-    dnnl::impl::runtime_kind_t runtime_kind() const {
-        return impl()->runtime_kind();
-    }
+    dnnl::impl::runtime_kind_t runtime_kind() const { return runtime_kind_; }
 
     /** get index of the current engine */
-    size_t index() const { return impl()->index(); }
+    size_t index() const { return index_; }
 
-    virtual dnnl::impl::engine_id_t engine_id() const {
-        return impl()->engine_id();
-    }
+    virtual dnnl::impl::device_id_t device_id() const = 0;
+
+    virtual dnnl::impl::engine_id_t engine_id() const = 0;
 
     /** create memory storage */
     virtual dnnl::impl::status_t create_memory_storage(
@@ -76,23 +81,16 @@ struct dnnl_engine : public dnnl::impl::c_compatible {
     }
 
     /** create stream */
-    virtual dnnl::impl::status_t create_stream(dnnl::impl::stream_t **stream,
-            dnnl::impl::stream_impl_t *stream_impl)
+    virtual dnnl::impl::status_t create_stream(
+            dnnl::impl::stream_t **stream, unsigned flags)
             = 0;
 
-    dnnl::impl::status_t create_stream(
-            dnnl::impl::stream_t **stream, unsigned flags) {
-        std::unique_ptr<dnnl::impl::stream_impl_t> stream_impl;
-        dnnl::impl::stream_impl_t *stream_impl_ptr = nullptr;
-        CHECK(impl()->create_stream_impl(&stream_impl_ptr, flags));
-        stream_impl.reset(stream_impl_ptr);
-
-        dnnl::impl::stream_t *s;
-        CHECK(create_stream(&s, stream_impl.get()));
-        stream_impl.release();
-        *stream = s;
-        return dnnl::impl::status::success;
+#if DNNL_CPU_RUNTIME == DNNL_RUNTIME_THREADPOOL
+    virtual dnnl::impl::status_t create_stream(dnnl::impl::stream_t **stream,
+            dnnl::threadpool_interop::threadpool_iface *threadpool) {
+        return dnnl::impl::status::invalid_arguments;
     }
+#endif
 
     virtual dnnl::impl::status_t get_service_stream(
             dnnl::impl::stream_t *&stream) {
@@ -132,14 +130,11 @@ struct dnnl_engine : public dnnl::impl::c_compatible {
 
     virtual bool mayiuse_f16_accumulator_with_f16() const { return false; }
 
-    const dnnl::impl::engine_impl_t *impl() const { return impl_.get(); }
-
 #ifdef ONEDNN_BUILD_GRAPH
-    // only used in graph implementation
-    void *get_allocator() const { return impl()->get_allocator(); }
-    // TODO: consider moving it to constructor.
+    /** only used in graph implementation **/
+    void *get_allocator() const { return (void *)(&allocator_); };
     void set_allocator(dnnl::impl::graph::allocator_t *alloc) {
-        impl_->set_allocator(alloc);
+        allocator_ = *alloc;
     }
 #endif
 
@@ -150,11 +145,18 @@ struct dnnl_engine : public dnnl::impl::c_compatible {
     }
 
 protected:
-    dnnl::impl::status_t init_impl() { return impl_->init(); }
+    dnnl::impl::engine_kind_t kind_;
+    dnnl::impl::runtime_kind_t runtime_kind_;
+    size_t index_;
+
+#ifdef ONEDNN_BUILD_GRAPH
+    /** only used in graph implementation **/
+    dnnl::impl::graph::allocator_t allocator_;
+#endif
+
     virtual ~dnnl_engine() = default;
 
 private:
-    std::unique_ptr<dnnl::impl::engine_impl_t> impl_;
     std::atomic<int> counter_;
 };
 

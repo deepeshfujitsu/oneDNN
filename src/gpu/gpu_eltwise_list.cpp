@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2021-2024 Intel Corporation
+* Copyright 2021 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -16,19 +16,8 @@
 
 #include "gpu/gpu_impl_list.hpp"
 
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_INTEL
-#include "gpu/intel/ocl/gen9_eltwise.hpp"
-#include "gpu/intel/ocl/ref_eltwise.hpp"
-#endif
-
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_NVIDIA
-#include "gpu/nvidia/cudnn_eltwise.hpp"
-#include "gpu/sycl/ref_eltwise.hpp"
-#endif
-
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_AMD
-#include "gpu/amd/miopen_eltwise.hpp"
-#endif
+#include "gpu/ocl/gen9_eltwise.hpp"
+#include "gpu/ocl/ref_eltwise.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -41,19 +30,13 @@ using namespace dnnl::impl::prop_kind;
 const std::map<pk_impl_key_t, std::vector<impl_list_item_t>>
         impl_list_map REG_ELTWISE_P({
     {{forward}, {
-        GPU_INSTANCE_INTEL(intel::ocl::gen9_eltwise_fwd_t)
-        GPU_INSTANCE_INTEL(intel::ocl::ref_eltwise_fwd_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_eltwise_fwd_t)
-        GPU_INSTANCE_AMD(amd::miopen_eltwise_fwd_t)
-        GPU_INSTANCE_GENERIC_SYCL(sycl::ref_sycl_eltwise_fwd_t)
+        INSTANCE(ocl::gen9_eltwise_fwd_t)
+        INSTANCE(ocl::ref_eltwise_fwd_t)
         nullptr,
     }},
     {{backward}, REG_BWD_PK({
-        GPU_INSTANCE_INTEL(intel::ocl::gen9_eltwise_bwd_t)
-        GPU_INSTANCE_INTEL(intel::ocl::ref_eltwise_bwd_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_eltwise_bwd_t)
-        GPU_INSTANCE_AMD(amd::miopen_eltwise_bwd_t)
-        GPU_INSTANCE_GENERIC_SYCL(sycl::ref_sycl_eltwise_bwd_t)
+        INSTANCE(ocl::gen9_eltwise_bwd_t)
+        INSTANCE(ocl::ref_eltwise_bwd_t)
         nullptr,
     })},
 });

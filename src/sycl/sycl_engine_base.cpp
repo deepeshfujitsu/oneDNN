@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2019-2024 Intel Corporation
+* Copyright 2019-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@
 
 #include "common/memory.hpp"
 #include "common/memory_storage.hpp"
-#include "gpu/intel/sycl/compat.hpp"
+#include "sycl/sycl_compat.hpp"
 #include "sycl/sycl_device_info.hpp"
+#include "sycl/sycl_memory_storage.hpp"
 #include "sycl/sycl_stream.hpp"
-#include "xpu/sycl/memory_storage.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -29,12 +29,29 @@ namespace sycl {
 
 status_t sycl_engine_base_t::create_memory_storage(
         memory_storage_t **storage, unsigned flags, size_t size, void *handle) {
-    return impl()->create_memory_storage(storage, this, flags, size, handle);
+    std::unique_ptr<memory_storage_t> _storage;
+
+    if (flags & memory_flags_t::prefer_device_usm) {
+        _storage.reset(new sycl_usm_memory_storage_t(
+                this, ::sycl::usm::alloc::device));
+    } else
+        _storage.reset(new sycl_buffer_memory_storage_t(this));
+
+    if (!_storage) return status::out_of_memory;
+
+    status_t status = _storage->init(flags, size, handle);
+    if (status != status::success) return status;
+
+    *storage = _storage.release();
+    return status::success;
 }
 
+status_t sycl_engine_base_t::create_stream(stream_t **stream, unsigned flags) {
+    return sycl_stream_t::create_stream(stream, this, flags);
+}
 status_t sycl_engine_base_t::create_stream(
-        impl::stream_t **stream, impl::stream_impl_t *stream_impl) {
-    return sycl_stream_t::create_stream(stream, this, stream_impl);
+        stream_t **stream, ::sycl::queue &queue) {
+    return sycl_stream_t::create_stream(stream, this, queue);
 }
 
 status_t sycl_engine_base_t::init_device_info() {

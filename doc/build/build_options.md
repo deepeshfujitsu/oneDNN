@@ -31,7 +31,7 @@ oneDNN supports the following build-time options.
 | ONEDNN_DEV_MODE                 | ON, **OFF**                                         | Enables internal tracing and `debuginfo` logging in verbose output (for oneDNN developers)      |
 | ONEDNN_AARCH64_USE_ACL          | ON, **OFF**                                         | Enables integration with Arm Compute Library for AArch64 builds                                 |
 | ONEDNN_BLAS_VENDOR              | **NONE**, ARMPL, ACCELERATE                         | Defines an external BLAS library to link to for GEMM-like operations                            |
-| ONEDNN_GPU_VENDOR               | NONE, **INTEL**, NVIDIA, AMD                        | When DNNL_GPU_RUNTIME is not NONE defines GPU vendor for GPU engines otherwise its value is NONE|
+| ONEDNN_GPU_VENDOR               | **INTEL**, NVIDIA, AMD                              | Defines GPU vendor for GPU engines                                                              |
 | ONEDNN_DPCPP_HOST_COMPILER      | **DEFAULT**, *GNU or Clang C++ compiler executable* | Specifies host compiler executable for SYCL runtime                                             |
 | ONEDNN_LIBRARY_NAME             | **dnnl**, *library name*                            | Specifies name of the library                                                                   |
 | ONEDNN_TEST_SET                 | SMOKE, **CI**, NIGHTLY, MODIFIER_NAME               | Specifies the testing coverage enabled through the generated testing targets                    |
@@ -89,11 +89,11 @@ This option supports several values: `ALL` (the default) which enables all
 primitives implementations or a set of `BATCH_NORMALIZATION`, `BINARY`,
 `CONCAT`, `CONVOLUTION`, `DECONVOLUTION`, `ELTWISE`, `INNER_PRODUCT`,
 `LAYER_NORMALIZATION`, `LRN`, `MATMUL`, `POOLING`, `PRELU`, `REDUCTION`,
-`REORDER`, `RESAMPLING`, `RNN`, `SDPA`, `SHUFFLE`, `SOFTMAX`, `SUM`. When a set
-is used, only those selected primitives implementations will be available.
-Attempting to use other primitive implementations will end up returning an
-unimplemented status when creating primitive descriptor. In order to specify a
-set, a CMake-style string should be used, with semicolon delimiters, as in this
+`REORDER`, `RESAMPLING`, `RNN`, `SHUFFLE`, `SOFTMAX`, `SUM`. When a set is used,
+only those selected primitives implementations will be available. Attempting to
+use other primitive implementations will end up returning an unimplemented
+status when creating primitive descriptor. In order to specify a set, a
+CMake-style string should be used, with semicolon delimiters, as in this
 example:
 ```
 -DONEDNN_ENABLE_PRIMITIVE=CONVOLUTION;MATMUL;REORDER
@@ -327,6 +327,7 @@ CMake error.
 
 | CMake Option            | Unsupported Values |
 |:------------------------|:-------------------|
+| ONEDNN_GPU_RUNTIME      | OCL                |
 | ONEDNN_GPU_VENDOR       | NVIDIA             |
 | ONEDNN_ENABLE_PRIMITIVE | PRIMITIVE_NAME     |
 | ONEDNN_ENABLE_WORKLOAD  | INFERENCE          |

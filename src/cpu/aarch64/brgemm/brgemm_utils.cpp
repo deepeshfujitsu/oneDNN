@@ -1,6 +1,6 @@
 /*******************************************************************************
 * Copyright 2022-2023 Intel Corporation
-* Copyright 2023 FUJITSU LIMITED
+* Copyright 2024 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -88,6 +88,7 @@ void maybe_try_bf32(brgemm_t *brg) {
     //
 }
 
+
 void set_isa_impl(brgemm_t *brg) {
     auto is_isa_ok = [&](cpu_isa_t isa) {
         return mayiuse(isa) &&
@@ -113,7 +114,8 @@ void set_isa_impl(brgemm_t *brg) {
 
 void set_brg_vmm(brgemm_t *brg) {
 
-    brg->is_zmm = mayiuse(sve_512) && is_superset(brg->isa_impl, sve_512);
+    brg->is_zmm = mayiuse(sve_512)
+            && is_superset(brg->isa_impl, sve_512);
     brg->is_ymm = !brg->is_zmm && mayiuse(sve_256)
             && is_superset(brg->isa_impl, sve_256);
 }
@@ -126,7 +128,7 @@ int calculate_ldb_params(brgemm_t *brg, const int try_ld_block2) {
     if (brg->ldb2 == 0) brg->ld_block2 = nstl::max(1, brg->ldb2_tail);
     brg->embd_bcst = brg->is_f32
             && (brg->ldb2_tail <= 1 && brg->ldb2 == 0)
-            /*only sve512 or more can bcast*/
+            /*only avx512 or more can bcast*/
             && is_superset(brg->isa_impl, sve_512);
 
     const int adj_ld_block2
@@ -145,7 +147,7 @@ int calculate_max_bcast_block(brgemm_t *brg, const int adj_ld_block2) {
             && brg->zp_type_a != brgemm_broadcast_t::none;
     const int beta_regs = !one_of(brg->beta, 1.f, 0.f);
 
-    const int max_isa_regs = 32;
+    const int max_isa_regs = isa_num_vregs(brg->isa_impl);
     // note: the 'adj_ld_block2' already removes the necessary registers
     // for 'embd_bcst'
     auto max_reg_count = max_isa_regs - max_bcst_regs - beta_regs
@@ -164,6 +166,7 @@ int calculate_max_bcast_block(brgemm_t *brg, const int adj_ld_block2) {
         max_bcast_block = nstl::min(max_bcast_block, bf16_emu_reg_count);
     }
 
+    // non-VNNI INT8 dot product required 2 temp vectors
     if (brg->is_int8 && !brg->has_int8_vnni) max_bcast_block -= 2;
 
     max_bcast_block /= adj_ld_block2;
@@ -189,9 +192,12 @@ status_t brgemm_blocking(brgemm_t *brg) {
 
     set_isa_impl(brg);
     if (brg->isa_impl == isa_undef) return status::unimplemented;
+    assert(!brg->is_dgmm); // should not be called from brdgmm
     set_brg_vmm(brg);
-    if (!(brg->is_zmm || brg->is_ymm)) return status::unimplemented;
+    if (!(brg->is_zmm || brg->is_ymm))
+        return status::unimplemented;
 
+  
     const int simd_w = is_superset(brg->isa_impl, sve_512) ? 16 : 8;
     brg->ld_block = simd_w;
     brg->ldb = brg->load_dim / brg->ld_block;
@@ -211,7 +217,8 @@ status_t brgemm_blocking(brgemm_t *brg) {
     const int min_block = 1;
     float best_bd_block_eff = 0.f;
     brg->bd_block = 1;
-    for (int bd_block = max_bcast_block; bd_block >= min_block; bd_block--) {
+    for (int bd_block = max_bcast_block; bd_block >= min_block;
+            bd_block--) {
         const auto bd_block_disb = static_cast<float>(brg->bcast_dim)
                 / rnd_up(brg->bcast_dim, bd_block);
         const auto brgemm_microkernel_eff
@@ -247,10 +254,11 @@ status_t brdgmm_blocking(brgemm_t *brg) {
 
     const int requires_permute_dst_vmm = brg->isa_impl == sve_512
             && jit_brdgmm_kernel_base_t::is_fast_vnni_int8(*brg);
-    const int max_vregs = 32;
+    const int max_vregs = isa_num_vregs(brg->isa_impl);
+    const int compute_vregs = 2; // b_vmm + a_vmm
     const int aux_vregs
             = nstl::max(brg->is_bf16_emu * 4, 2) + requires_permute_dst_vmm;
-    const int max_acc_vmms = max_vregs - aux_vregs;
+    const int max_acc_vmms = max_vregs - aux_vregs  - compute_vregs;
     const int simd_w = isa_max_vlen(brg->isa_impl) / brg->typesize_C;
 
     auto &M = brg->bcast_dim;
@@ -323,7 +331,8 @@ void init_brgemm_conf(brgemm_t *brg, cpu_isa_t isa, brgemm_batch_kind_t type,
     brg->has_int8_vnni = true;
 
     set_brg_vmm(brg); // TODO: Investigate if it is really needed here.
-    brg->req_s8s8_compensation = brg->is_int8 && brg->dt_a == data_type::s8;
+    brg->req_s8s8_compensation
+            = brg->is_int8 && brg->dt_a == data_type::s8;
 
     brg->LDA = (brg->is_row_major()) ? static_cast<int>(LDA)
                                      : static_cast<int>(LDB);

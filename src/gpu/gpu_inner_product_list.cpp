@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2021-2024 Intel Corporation
+* Copyright 2021-2022 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -16,21 +16,10 @@
 
 #include "gpu/gpu_impl_list.hpp"
 
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_INTEL
-#include "gpu/intel/ocl/convolution_inner_product.hpp"
-#include "gpu/intel/ocl/gemm_inner_product.hpp"
-#include "gpu/intel/ocl/gemm_post_ops_inner_product.hpp"
-#include "gpu/intel/ocl/ref_inner_product.hpp"
-#endif
-
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_NVIDIA
-#include "gpu/nvidia/cudnn_conv_inner_product.hpp"
-#include "gpu/nvidia/cudnn_gemm_inner_product.hpp"
-#endif
-
-#if DNNL_GPU_VENDOR == DNNL_VENDOR_AMD
-#include "gpu/amd/miopen_gemm_inner_product.hpp"
-#endif
+#include "gpu/ocl/convolution_inner_product.hpp"
+#include "gpu/ocl/gemm_inner_product.hpp"
+#include "gpu/ocl/gemm_post_ops_inner_product.hpp"
+#include "gpu/ocl/ref_inner_product.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -43,25 +32,16 @@ using namespace dnnl::impl::prop_kind;
 const std::map<pk_impl_key_t, std::vector<impl_list_item_t>>
         impl_list_map REG_IP_P({
     {{forward}, {
-        GPU_INSTANCE_INTEL(intel::ocl::gemm_inner_product_fwd_t)
-        GPU_INSTANCE_INTEL(intel::ocl::convolution_inner_product_fwd_t)
-        GPU_INSTANCE_INTEL(intel::ocl::ref_inner_product_fwd_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_gemm_inner_product_fwd_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_conv_inner_product_fwd_t)
-        GPU_INSTANCE_AMD(amd::miopen_gemm_inner_product_fwd_t)
+        INSTANCE(ocl::gemm_inner_product_fwd_t)
+        INSTANCE(ocl::convolution_inner_product_fwd_t)
+        INSTANCE(ocl::ref_inner_product_fwd_t)
         nullptr,
     }},
     {{backward}, REG_BWD_PK({
-        GPU_INSTANCE_INTEL(intel::ocl::gemm_inner_product_bwd_data_t)
-        GPU_INSTANCE_INTEL(intel::ocl::gemm_inner_product_bwd_weights_t)
-        GPU_INSTANCE_INTEL(intel::ocl::ref_inner_product_bwd_data_t)
-        GPU_INSTANCE_INTEL(intel::ocl::ref_inner_product_bwd_weights_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_gemm_inner_product_bwd_data_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_gemm_inner_product_bwd_weights_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_conv_inner_product_bwd_data_t)
-        GPU_INSTANCE_NVIDIA(nvidia::cudnn_conv_inner_product_bwd_weights_t)
-        GPU_INSTANCE_AMD(amd::miopen_gemm_inner_product_bwd_data_t)
-        GPU_INSTANCE_AMD(amd::miopen_gemm_inner_product_bwd_weights_t)
+        INSTANCE(ocl::gemm_inner_product_bwd_data_t)
+        INSTANCE(ocl::gemm_inner_product_bwd_weights_t)
+        INSTANCE(ocl::ref_inner_product_bwd_data_t)
+        INSTANCE(ocl::ref_inner_product_bwd_weights_t)
         nullptr,
     })},
 });

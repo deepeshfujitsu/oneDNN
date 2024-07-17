@@ -1,6 +1,6 @@
 /*******************************************************************************
 * Copyright 2020-2023 Intel Corporation
-* Copyright 2023 FUJITSU LIMITED
+* Copyright 2024 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -333,8 +333,10 @@ status_t brgemm_desc_set_postops(brgemm_t *brg, const primitive_attr_t *attr,
     init_zp_type(brg->zp_type_c, DNNL_ARG_DST);
 
     // src zero points require additional register in brgemm kernel
-    if (brg->zp_type_a != brgemm_broadcast_t::none
-            || (brg->is_bf16_emu && !brg->is_dgmm))
+    const bool is_zp_src = brg->zp_type_a != brgemm_broadcast_t::none;
+    if (brg->is_dgmm) {
+        if (is_zp_src) CHECK(brdgmm_blocking(brg));
+    } else if (is_zp_src || brg->is_bf16_emu)
         CHECK(brgemm_blocking(brg));
 
     return status::success;
@@ -371,7 +373,8 @@ status_t brgemm_desc_set_attr(brgemm_t *brg, const brgemm_attr_t &brgattr) {
                     || brgattr.hint_ld_block != 0 || brgattr.hint_ld_block2 != 0
                     || brgattr.hint_load_nt_A != brgemm_hint_nt_undef
                     || brgattr.hint_load_nt_B != brgemm_hint_nt_undef);
-    if (brgattr.use_uker || hint_blocking_set || brgattr.bd_mask_level
+    if (brgattr.use_uker || hint_blocking_set
+            || brgattr.bd_mask_level
             || brgattr.fpmath_mode != fpmath_mode::strict || max_vpad > 0) {
         if (brg->is_dgmm)
             CHECK(brdgmm_blocking(brg));
@@ -397,9 +400,6 @@ status_t brgemm_desc_set_attr(brgemm_t *brg, const brgemm_attr_t &brgattr) {
 
     if (!IMPLICATION(brg->is_blocked, brg->layout = brgemm_row_major))
         return status::invalid_arguments;
-
-    if (brgattr.max_top_vpad > 0 || brgattr.max_bottom_vpad > 0)
-        return status::unimplemented;
 
     brg->prfA = brgattr.hint_prfA;
     brg->prfB = brgattr.hint_prfB;
@@ -439,7 +439,7 @@ status_t brgemm_kernel_destroy(brgemm_kernel_t *brg_kernel) {
 }
 
 status_t brgemm_init_tiles(const brgemm_t &brg, char palette[64]) {
-    return status::unimplemented;
+    return status::unimplemented;    
 }
 
 namespace {
@@ -564,3 +564,5 @@ bool brgemm_t::operator<(const brgemm_t &rhs) const {
 } // namespace cpu
 } // namespace impl
 } // namespace dnnl
+
+// vim: et ts=4 sw=4 cindent cino+=l0,\:4,N-s

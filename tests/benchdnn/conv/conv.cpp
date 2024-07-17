@@ -377,8 +377,7 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
         const bool is_x8x8f16 = is_int8_src && is_int8_wei && is_f16_dst;
 
         if (is_f32f32x8 || is_bf16bf16x8 || is_x8x8f16 || !is_valid_f16) {
-            res->state = SKIPPED;
-            res->reason = skip_reason::case_not_supported;
+            res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
             return;
         }
     }
@@ -387,15 +386,13 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
     // make sense to list all of them, just convert all unimplemented Winograd
     // problems into not supported.
     if (prb->alg == WINO) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
+        res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
         return;
     }
 
     // GPU does not support depthwise fusion
     if (is_gpu() && prb->attr.post_ops.convolution_index() != -1) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
+        res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
         return;
     }
 }

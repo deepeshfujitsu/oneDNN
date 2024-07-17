@@ -67,27 +67,6 @@ else()
     list(APPEND EXTRA_SHARED_LIBS OpenCL::OpenCL)
 endif()
 
-# CUDA and ROCm contain OpenCL headers that conflict with the OpenCL
-# headers located in the compiler's directory.
-# The workaround is to get interface include directories from all CUDA/ROCm
-# import targets and lower their priority via `-idirafter` so that the
-# compiler picks up the proper OpenCL headers.
-macro(adjust_headers_priority targets)
-    if(NOT WIN32)
-        set(include_dirs)
-        foreach(import_target ${targets})
-            get_target_property(import_target_include_dirs ${import_target} INTERFACE_INCLUDE_DIRECTORIES)
-            set_target_properties(${import_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
-            list(APPEND include_dirs ${import_target_include_dirs})
-        endforeach()
-
-        list(REMOVE_DUPLICATES include_dirs)
-        foreach(include_dir ${include_dirs})
-            append(CMAKE_CXX_FLAGS "-idirafter${include_dir}")
-        endforeach()
-    endif()
-endmacro()
-
 if(DNNL_SYCL_CUDA)
     # XXX: Suppress warning coming from SYCL headers:
     #   error: use of function template name with no prior declaration in
@@ -101,20 +80,31 @@ if(DNNL_SYCL_CUDA)
     find_package(cuBLAS REQUIRED)
     find_package(cuDNN REQUIRED)
 
-    adjust_headers_priority("cuBLAS::cuBLAS;cuDNN::cuDNN")
-    add_definitions_with_host_compiler("-DCUDA_NO_HALF")
+    if(NOT WIN32)
+        # XXX: CUDA contains OpenCL headers that conflict with the OpenCL
+        # headers located in the compiler's directory.
+        # The workaround is the following:
+        # Get interface include directories from all CUDA related import
+        # targets and lower their priority via `-idirafter` so that the
+        # compiler picks up the proper OpenCL headers.
+        set(cuda_include_dirs)
+        foreach(cuda_import_target cuBLAS::cuBLAS;cuDNN::cuDNN)
+            get_target_property(cuda_import_target_include_dirs ${cuda_import_target} INTERFACE_INCLUDE_DIRECTORIES)
+            set_target_properties(${cuda_import_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
+            list(APPEND cuda_include_dirs ${cuda_import_target_include_dirs})
+        endforeach()
 
-    list(APPEND EXTRA_SHARED_LIBS cuBLAS::cuBLAS cuDNN::cuDNN)
+        list(REMOVE_DUPLICATES cuda_include_dirs)
+        foreach(cuda_include_dir ${cuda_include_dirs})
+            append(CMAKE_CXX_FLAGS "-idirafter${cuda_include_dir}")
+        endforeach()
+    endif()
+
     message(STATUS "DPC++ support is enabled (CUDA)")
 elseif(DNNL_SYCL_HIP)
     find_package(HIP REQUIRED)
     find_package(rocBLAS REQUIRED)
     find_package(MIOpen REQUIRED)
-
-    adjust_headers_priority("HIP::HIP;rocBLAS::rocBLAS;MIOpen::MIOpen")
-    add_definitions_with_host_compiler("-D__HIP_PLATFORM_AMD__=1")
-
-    list(APPEND EXTRA_SHARED_LIBS HIP::HIP rocBLAS::rocBLAS MIOpen::MIOpen)
     message(STATUS "DPC++ support is enabled (HIP)")
 else()
     # In order to support large shapes.

@@ -24,7 +24,6 @@
 
 #include "cpu/x64/injectors/jit_uni_postops_injector.hpp"
 #include "cpu/x64/jit_avx512_core_bf16cvt.hpp"
-#include "cpu/x64/jit_avx512_core_fp8cvt.hpp"
 #include "cpu/x64/jit_generator.hpp"
 #include "cpu/x64/jit_primitive_conf.hpp"
 
@@ -475,7 +474,7 @@ struct jit_avx512_core_amx_bwd_data_kernel_t : public jit_generator {
         , attr_(attr)
         , eltwise_injector_(nullptr) {
         if (jcp.with_eltwise)
-            eltwise_injector_ = new jit_uni_eltwise_injector<avx512_core>(
+            eltwise_injector_ = new jit_uni_eltwise_injector_f32<avx512_core>(
                     this, jcp.eltwise);
         bwd_data_copy_kernel_
                 = new jit_avx512_core_amx_bwd_data_copy_kernel_t(jcp);
@@ -510,7 +509,7 @@ struct jit_avx512_core_amx_bwd_data_kernel_t : public jit_generator {
     }
 
 private:
-    jit_uni_eltwise_injector<avx512_core> *eltwise_injector_;
+    jit_uni_eltwise_injector_f32<avx512_core> *eltwise_injector_;
     jit_avx512_core_amx_bwd_data_copy_kernel_t *bwd_data_copy_kernel_;
 
     int prv_width_ = 0;
@@ -772,28 +771,18 @@ private:
     Xbyak::Ymm yreg_bias_acc1 = Xbyak::Ymm(3);
     Xbyak::Ymm yreg_bias_ddst0 = Xbyak::Ymm(2);
     Xbyak::Ymm yreg_bias_ddst1 = Xbyak::Ymm(4);
-    Xbyak::Ymm yreg_bias_ddst00 = Xbyak::Ymm(5);
-    Xbyak::Ymm yreg_bias_ddst01 = Xbyak::Ymm(6);
-
-    Xbyak::Ymm yreg_permute_to_vnni = Xbyak::Ymm(14);
-    Xbyak::Ymm yreg_permute_to_plain = Xbyak::Ymm(15);
-
-    Xbyak::Zmm emu_reserv_1 = Xbyak::Zmm(30);
-    Xbyak::Zmm emu_reserv_2 = Xbyak::Zmm(29);
-    Xbyak::Zmm emu_reserv_3 = Xbyak::Zmm(28);
-    Xbyak::Zmm emu_reserv_4 = Xbyak::Zmm(27);
-    Xbyak::Zmm emu_reserv_5 = Xbyak::Zmm(26);
-    Xbyak::Reg64 emu_scratch = r10;
-    Xbyak::Opmask emu_mask = Xbyak::Opmask(4);
-
-    std::unique_ptr<fp8_emulation_base_t> f8_emu;
 
     void compute_diff_bias_row(int ocb);
     void compute_diff_bias(int nb_oc_blocking);
 
     void generate() override;
 
-    dim_t get_ddst_offset(dim_t w_idx, dim_t hd_idx = 0) const;
+    inline dim_t get_ddst_offset(dim_t w_idx, dim_t hd_idx = 0) {
+        int ow_per_oc = 2;
+        dim_t w_off = w_idx / ow_per_oc * ow_per_oc * jcp.oc_block
+                + w_idx % ow_per_oc;
+        return jcp.typesize_in * (w_off + jcp.tr_ow * jcp.oc_block * hd_idx);
+    }
 };
 
 } // namespace x64

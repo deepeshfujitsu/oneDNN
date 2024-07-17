@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2022-2024 Intel Corporation
+* Copyright 2022-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -23,7 +23,8 @@ namespace brgemm {
 #if DNNL_CPU_RUNTIME != DNNL_RUNTIME_NONE
 #if defined(DNNL_X64) && DNNL_X64 == 1
 #define brg_x64
-#elif defined(DNNL_AARCH64) && DNNL_AARCH64 == 1
+#endif
+#if defined(DNNL_AARCH64) && DNNL_AARCH64 == 1
 #define brg_aarch64
 #endif
 #endif
@@ -57,7 +58,7 @@ void compute_ref_brgemm(const prb_t *prb, const args_t &args) {
     // Using workspace memory as a method to get brgemm attributes.
 #if defined(brg_x64)
     using brgemm_attr_t = dnnl::impl::cpu::x64::brgemm_attr_t;
-#elif defined(brg_aarch64)
+#else
     using brgemm_attr_t = dnnl::impl::cpu::aarch64::brgemm_attr_t;
 #endif
 

@@ -2,6 +2,8 @@
 * Copyright 2018-2023 Intel Corporation
 * Copyright 2020-2024 FUJITSU LIMITED
 * Copyright 2023 Arm Ltd. and affiliates 
+* Copyright 2020-2024 FUJITSU LIMITED
+* Copyright 2023 Arm Ltd. and affiliates 
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -21,6 +23,8 @@
 
 #include <type_traits>
 
+#include "dnnl_types.h"
+#include "common/type_helpers.hpp"
 #include "common/type_helpers.hpp"
 #include "common/utils.hpp"
 #include "dnnl_types.h"
@@ -231,6 +235,17 @@ static inline bool mayiuse_bf16() {
     return cpu().isBf16Supported();
 }
 
+static inline int isa_num_vregs(cpu_isa_t isa) {
+    if (isa == sve_512)
+        return cpu_isa_traits<sve_512>::n_vregs;
+    else if (isa == sve_256)
+        return cpu_isa_traits<sve_256>::n_vregs;
+    else if (isa == sve_128)
+        return cpu_isa_traits<sve_128>::n_vregs;
+    else
+        return 0;
+};
+
 } // namespace
 
 /* whatever is required to generate string literals... */
@@ -244,6 +259,7 @@ static inline bool mayiuse_bf16() {
     ((isa) == sve_512 ? prefix STRINGIFY(sve_512) : \
     prefix suffix_if_any)))))
 /* clang-format on */
+
 
 inline size_t data_type_vnni_granularity(data_type_t data_type) {
     using namespace data_type;

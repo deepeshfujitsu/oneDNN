@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2022-2024 Arm Ltd. and affiliates
+* Copyright 2022-2023 Arm Ltd. and affiliates
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ struct acl_deconv_conf_t {
     bool with_bias;
     // If this is true, the result of the convolution goes into a temporarily
     // allocated ACL tensor to be accumulated into the oneDNN dst during postops
-    bool use_dst_acc_for_sum;
+    bool use_dst_acc;
     bool fast_math;
     arm_compute::TensorInfo src_info;
     arm_compute::TensorInfo wei_info;
@@ -88,8 +88,7 @@ struct acl_deconvolution_fwd_t : public primitive_t {
             , acl_pd_conf()
             , post_ops() {}
 
-        DECLARE_COMMON_PD_T(
-                "acl", acl_deconvolution_fwd_t, USE_GLOBAL_SCRATCHPAD);
+        DECLARE_COMMON_PD_T("acl", acl_deconvolution_fwd_t);
 
         status_t init(engine_t *engine) {
             using namespace data_type;
@@ -202,14 +201,10 @@ struct acl_deconvolution_fwd_t : public primitive_t {
                             : arm_compute::TensorShape(iw, ih, ic, mb),
                     1, acl_src_data_t, acl_layout);
 
-            auto wei_info_tensor_shape = is_nspc
-                    ? arm_compute::TensorShape(ic, kw, kh, oc)
-                    : arm_compute::TensorShape(kw, kh, ic, oc);
-            // ACL removes last dimension if dim is 1.
-            // Below fix ensures the tensor shape is correct when queried.
-            wei_info_tensor_shape.set_num_dimensions(4);
-            acl_pd_conf.wei_info = arm_compute::TensorInfo(
-                    wei_info_tensor_shape, 1, acl_wei_data_t, acl_layout);
+            acl_pd_conf.wei_info = arm_compute::TensorInfo(is_nspc
+                            ? arm_compute::TensorShape(ic, kw, kh, oc)
+                            : arm_compute::TensorShape(kw, kh, ic, oc),
+                    1, acl_wei_data_t, acl_layout);
 
             acl_pd_conf.dst_info = arm_compute::TensorInfo(is_nspc
                             ? arm_compute::TensorShape(oc, ow, oh, mb)
@@ -292,13 +287,7 @@ struct acl_deconvolution_fwd_t : public primitive_t {
             }
 
             CHECK(post_ops.init(engine, attr_.post_ops_, dst_md_));
-            acl_pd_conf.use_dst_acc_for_sum = post_ops.has_sum();
-
-            if (acl_pd_conf.use_dst_acc_for_sum) {
-                auto scratchpad = scratchpad_registry().registrar();
-                scratchpad.book(memory_tracking::names::key_generic_acc,
-                        dst_d.nelems(), dst_d.data_type_size());
-            }
+            acl_pd_conf.use_dst_acc = post_ops.has_sum();
 
             return status::success;
         }

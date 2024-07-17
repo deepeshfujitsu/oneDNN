@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2022-2024 Intel Corporation
+* Copyright 2022 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -28,36 +28,12 @@
 using namespace dnnl::graph;
 
 #ifdef DNNL_WITH_SYCL
-
-inline void construct_conv_relu(graph &g, size_t seed) {
+TEST(ApiExecute, ConvReLU) {
     using data_type = logical_tensor::data_type;
     using layout_type = logical_tensor::layout_type;
 
     std::vector<int64_t> conv0_input_dims {1, 3, 227, 227};
     std::vector<int64_t> conv0_weight_dims {16, 3, 11, 11};
-    logical_tensor conv0_src_desc {
-            0, data_type::f32, conv0_input_dims, layout_type::strided};
-    logical_tensor conv0_weight_desc {
-            1, data_type::f32, conv0_weight_dims, layout_type::strided};
-    logical_tensor conv0_dst_desc {2, data_type::f32, 4, layout_type::strided};
-    op conv0(0 + seed, op::kind::Convolution,
-            {conv0_src_desc, conv0_weight_desc}, {conv0_dst_desc}, "conv0");
-    conv0.set_attr<std::vector<int64_t>>(op::attr::strides, {4, 4});
-    conv0.set_attr<std::vector<int64_t>>(op::attr::pads_begin, {0, 0});
-    conv0.set_attr<std::vector<int64_t>>(op::attr::pads_end, {0, 0});
-    conv0.set_attr<std::vector<int64_t>>(op::attr::dilations, {1, 1});
-    conv0.set_attr<int64_t>(op::attr::groups, 1);
-    conv0.set_attr<std::string>(op::attr::data_format, "NCX");
-    conv0.set_attr<std::string>(op::attr::weights_format, "OIX");
-    logical_tensor relu0_dst_desc {3, data_type::f32, 4, layout_type::strided};
-    op relu0(1 + seed, op::kind::ReLU, {conv0_dst_desc}, {relu0_dst_desc},
-            "relu0");
-    g.add_op(conv0);
-    g.add_op(relu0);
-    g.finalize();
-}
-
-TEST(SYCLApi, CompiledPartitionExecute) {
 
     dnnl::engine::kind ekind
             = static_cast<dnnl::engine::kind>(api_test_engine_kind);
@@ -66,7 +42,25 @@ TEST(SYCLApi, CompiledPartitionExecute) {
             "skip sycl api test for native cpu runtime.");
 #endif
     graph g(ekind);
-    construct_conv_relu(g, 100);
+    logical_tensor conv0_src_desc {
+            0, data_type::f32, conv0_input_dims, layout_type::strided};
+    logical_tensor conv0_weight_desc {
+            1, data_type::f32, conv0_weight_dims, layout_type::strided};
+    logical_tensor conv0_dst_desc {2, data_type::f32, 4, layout_type::strided};
+    op conv0(0, op::kind::Convolution, {conv0_src_desc, conv0_weight_desc},
+            {conv0_dst_desc}, "conv0");
+    conv0.set_attr<std::vector<int64_t>>(op::attr::strides, {4, 4});
+    conv0.set_attr<std::vector<int64_t>>(op::attr::pads_begin, {0, 0});
+    conv0.set_attr<std::vector<int64_t>>(op::attr::pads_end, {0, 0});
+    conv0.set_attr<std::vector<int64_t>>(op::attr::dilations, {1, 1});
+    conv0.set_attr<int64_t>(op::attr::groups, 1);
+    conv0.set_attr<std::string>(op::attr::data_format, "NCX");
+    conv0.set_attr<std::string>(op::attr::weights_format, "OIX");
+    logical_tensor relu0_dst_desc {3, data_type::f32, 4, layout_type::strided};
+    op relu0(1, op::kind::ReLU, {conv0_dst_desc}, {relu0_dst_desc}, "relu0");
+    g.add_op(conv0);
+    g.add_op(relu0);
+    g.finalize();
     auto partition = g.get_partitions()[0];
 
     allocator alloc = sycl_interop::make_allocator(
@@ -74,9 +68,9 @@ TEST(SYCLApi, CompiledPartitionExecute) {
             dnnl::graph::testing::sycl_free_wrapper);
 
     sycl::queue q = (ekind == dnnl::engine::kind::gpu)
-            ? sycl::queue(dnnl::impl::xpu::sycl::compat::gpu_selector_v,
+            ? sycl::queue(dnnl::impl::sycl::compat::gpu_selector_v,
                     sycl::property::queue::in_order {})
-            : sycl::queue(dnnl::impl::xpu::sycl::compat::cpu_selector_v,
+            : sycl::queue(dnnl::impl::sycl::compat::cpu_selector_v,
                     sycl::property::queue::in_order {});
 
     dnnl::engine eng = sycl_interop::make_engine_with_allocator(
@@ -121,7 +115,13 @@ TEST(SYCLApi, CompiledPartitionExecute) {
     strm.wait();
 }
 
-TEST(SYCLApi, CompiledPartitionInteropExecute) {
+TEST(SyclApiExecute, ConvReLU) {
+    using data_type = logical_tensor::data_type;
+    using layout_type = logical_tensor::layout_type;
+
+    std::vector<int64_t> conv0_input_dims {1, 3, 227, 227};
+    std::vector<int64_t> conv0_weight_dims {16, 3, 11, 11};
+
     dnnl::engine::kind ekind
             = static_cast<dnnl::engine::kind>(api_test_engine_kind);
 #if DNNL_CPU_RUNTIME != DNNL_RUNTIME_SYCL
@@ -129,7 +129,25 @@ TEST(SYCLApi, CompiledPartitionInteropExecute) {
             "skip sycl api test for native cpu runtime.");
 #endif
     graph g(ekind);
-    construct_conv_relu(g, 200);
+    logical_tensor conv0_src_desc {
+            0, data_type::f32, conv0_input_dims, layout_type::strided};
+    logical_tensor conv0_weight_desc {
+            1, data_type::f32, conv0_weight_dims, layout_type::strided};
+    logical_tensor conv0_dst_desc {2, data_type::f32, 4, layout_type::strided};
+    op conv0(0, op::kind::Convolution, {conv0_src_desc, conv0_weight_desc},
+            {conv0_dst_desc}, "conv0");
+    conv0.set_attr<std::vector<int64_t>>(op::attr::strides, {4, 4});
+    conv0.set_attr<std::vector<int64_t>>(op::attr::pads_begin, {0, 0});
+    conv0.set_attr<std::vector<int64_t>>(op::attr::pads_end, {0, 0});
+    conv0.set_attr<std::vector<int64_t>>(op::attr::dilations, {1, 1});
+    conv0.set_attr<int64_t>(op::attr::groups, 1);
+    conv0.set_attr<std::string>(op::attr::data_format, "NCX");
+    conv0.set_attr<std::string>(op::attr::weights_format, "OIX");
+    logical_tensor relu0_dst_desc {3, data_type::f32, 4, layout_type::strided};
+    op relu0(1, op::kind::ReLU, {conv0_dst_desc}, {relu0_dst_desc}, "relu0");
+    g.add_op(conv0);
+    g.add_op(relu0);
+    g.finalize();
     auto partition = g.get_partitions()[0];
 
     allocator alloc = sycl_interop::make_allocator(
@@ -137,9 +155,9 @@ TEST(SYCLApi, CompiledPartitionInteropExecute) {
             dnnl::graph::testing::sycl_free_wrapper);
 
     sycl::queue q = (ekind == dnnl::engine::kind::gpu)
-            ? sycl::queue(dnnl::impl::xpu::sycl::compat::gpu_selector_v,
+            ? sycl::queue(dnnl::impl::sycl::compat::gpu_selector_v,
                     sycl::property::queue::in_order {})
-            : sycl::queue(dnnl::impl::xpu::sycl::compat::cpu_selector_v,
+            : sycl::queue(dnnl::impl::sycl::compat::cpu_selector_v,
                     sycl::property::queue::in_order {});
 
     dnnl::engine eng = sycl_interop::make_engine_with_allocator(

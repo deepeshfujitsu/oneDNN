@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2019-2024 Intel Corporation
+* Copyright 2019-2021 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 #ifndef DNNL_TEST_COMMON_OCL_HPP
 #define DNNL_TEST_COMMON_OCL_HPP
 
-#include "gpu/intel/ocl/ocl_utils.hpp"
+#include "gpu/ocl/ocl_utils.hpp"
 #include "oneapi/dnnl/dnnl.hpp"
 #include "oneapi/dnnl/dnnl_debug.h"
 #include "oneapi/dnnl/dnnl_ocl.hpp"
@@ -29,7 +29,7 @@
 #ifdef DNNL_ENABLE_MEM_DEBUG
 #define TEST_OCL_CHECK(x) \
     do { \
-        dnnl_status_t s = dnnl::impl::gpu::intel::ocl::convert_to_dnnl(x); \
+        dnnl_status_t s = dnnl::impl::gpu::ocl::convert_to_dnnl(x); \
         dnnl::error::wrap_c_api(s, dnnl_status2str(s)); \
     } while (0)
 #else

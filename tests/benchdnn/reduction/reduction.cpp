@@ -209,8 +209,7 @@ void skip_invalid_prb(const prb_t *prb, res_t *res) {
             && (is_integral_dt(prb->sdt) || prb->p < 1.f);
 
     if (is_invalid) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::invalid_case;
+        res->state = SKIPPED, res->reason = INVALID_CASE;
         return;
     }
 }

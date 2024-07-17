@@ -137,17 +137,7 @@ following information:
 oneDNN uses gtests for lightweight functional testing and benchdnn for
 performance and functional testing.
 
-Verify the modified code is covered by existing tests. If not, update the
-coverage to validate the change and sumbit it as a part of the PR.
+Be sure to extend the existing tests when fixing an issue.
 
-Use the following command to run tests selected by a build configuration:
-``` sh
-    ctest
-```
-
-To modify the coverage, use the
-[`ONEDNN_TEST_SET`](https://oneapi-src.github.io/oneDNN/dev_guide_build_options.html#onednn-test-set)
-build option.
-
-More details on how to run benchdnn can be found in
-[benchdnn documentation](tests/benchdnn/doc/benchdnn_general_info.md#running-tests).
+Developing new benchdnn tests can be hard, so it is a good idea to start with
+gtests first.

@@ -296,6 +296,8 @@ struct jit_softmax_base_t : public jit_generator {
         }
     }
 
+    ZReg bf16_cvt_ymm = ZReg(22);
+
     void store(const XReg &addr, const ZReg &vmm, data_type_t dt,
             bool tail = false) {
         PReg opmask = P_ALL_ONE;
@@ -304,7 +306,7 @@ struct jit_softmax_base_t : public jit_generator {
         TReg src_vmm = vmm;
 
         if (tail) {
-            if (dt == data_type::f32) {
+            if (utils::one_of(dt, data_type::f32, data_type::bf16)) {
                 if (axis_is_blocked_) {
                     src_vmm = vzero;
                     eor(vzero.d, vzero.d, vzero.d);
@@ -324,6 +326,10 @@ struct jit_softmax_base_t : public jit_generator {
         switch (dt) {
             case data_type::f32:
                 st1w(src_vmm.s, opmask, ptr(effective_addr));
+                break;
+            case data_type::bf16:
+                bfcvt(bf16_cvt_ymm.h, P_ALL_ONE / T_z, src_vmm.s);
+                st1h(bf16_cvt_ymm.s, opmask, ptr(effective_addr));
                 break;
             case data_type::u8:
                 eor(vzero.d, vzero.d, vzero.d); // since vzero might be spoiled
@@ -363,6 +369,11 @@ struct jit_softmax_base_t : public jit_generator {
         switch (dt) {
             case data_type::f32:
                 ld1w(effective_vmm, tmp_mask, ptr(addr));
+                break;
+            case data_type::bf16:
+                ld1h(effective_vmm, tmp_mask / T_z, ptr(addr));
+                lsl(effective_vmm, effective_vmm,
+                        0x10); // Shift left by 16 bits
                 break;
             case data_type::u8:
                 ld1b(effective_vmm, tmp_mask / T_z, ptr(addr));

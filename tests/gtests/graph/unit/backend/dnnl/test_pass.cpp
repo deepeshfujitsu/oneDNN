@@ -30,7 +30,6 @@
 #include "backend/dnnl/dnnl_backend.hpp"
 #include "backend/dnnl/dnnl_partition_impl.hpp"
 
-#include "graph/backend/dnnl/patterns/data_type_check_pass.hpp"
 #include "graph/backend/dnnl/platform.hpp"
 #include "graph/unit/unit_test_common.hpp"
 #include "graph/unit/utils.hpp"
@@ -44,8 +43,6 @@ using op_ptr = std::shared_ptr<dnnl::impl::graph::op_t>;
 #define for_ for
 
 namespace {
-using namespace dnnl::impl::graph::dnnl_impl::platform;
-
 dnnl::impl::graph::pass::pass_base_ptr get_pass(const std::string &pass_name) {
     auto &backend_ptr
             = dnnl::impl::graph::dnnl_impl::dnnl_backend::get_singleton();
@@ -64,9 +61,10 @@ bool is_supported_partition(const std::shared_ptr<graph::partition_impl_t> &p) {
             && (p->get_assigned_backend()->get_name() != "fake_backend");
 }
 
-static bool is_supported_dtype(data_type_t dt, dir_t dir = dir_t::FLAG_FWD) {
+bool is_supported_dtype(data_type_t dt) {
     static graph::engine_t *engine = get_engine();
-    return get_dtype_support_status(engine->kind(), dt, dir);
+    return dnnl::impl::graph::dnnl_impl::platform::get_dtype_support_status(
+            engine->kind(), dt);
 }
 
 } // namespace
@@ -4797,10 +4795,7 @@ public:
         auto pm = pass::pass_manager_t(backend_ptr.get_pass_registry());
         pm.run_passes(agraph, "no_config");
 
-        const auto aop_ptr = std::make_shared<op_t>(aop);
-        if (!is_supported_dtype(params.data_type,
-                    dnnl::impl::graph::dnnl_impl::pattern::get_op_dir(
-                            aop_ptr))) {
+        if (!is_supported_dtype(params.data_type)) {
             ASSERT_EQ(agraph.get_num_partitions(), 1U);
 
             auto p = agraph.get_partitions().front();
@@ -7219,7 +7214,10 @@ TEST(test_pass_pass, FuseToInt8Matmul) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -7374,7 +7372,10 @@ TEST(test_pass_pass, OptionalQuantForInt8Matmul) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -7465,7 +7466,10 @@ TEST(test_pass_pass, OptionalQuantWith2ConsumersForInt8Matmul) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -7561,7 +7565,9 @@ TEST(test_pass_pass, FuseToInt8MatMulBinary) {
             agraph.finalize();
 
             graph::pass::pass_base_ptr apass
-                    = get_pass("x8x8x_matmul_post_ops");
+                    = get_pass(engine_kind == graph::engine_kind::gpu
+                                    ? "x8s8x_matmul_post_ops_gpu"
+                                    : "x8x8x_matmul_post_ops_cpu");
             ASSERT_NE(apass, nullptr);
             apass->run(agraph);
             ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -7658,7 +7664,10 @@ TEST(test_pass_pass, FailToFuseToInt8MatMulDivOrSubtract) {
 
         agraph.finalize();
 
-        graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+        graph::pass::pass_base_ptr apass
+                = get_pass(engine_kind == graph::engine_kind::gpu
+                                ? "x8s8x_matmul_post_ops_gpu"
+                                : "x8x8x_matmul_post_ops_cpu");
         ASSERT_NE(apass, nullptr);
         apass->run(agraph);
         ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -7812,7 +7821,10 @@ TEST(test_pass_pass, FuseToInt8MatmulBias) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -7955,7 +7967,10 @@ TEST(test_pass_pass, FuseToInt8MatmulRelu) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -8106,7 +8121,10 @@ TEST(test_pass_pass, FuseToInt8MatmulBiasRelu) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -8162,7 +8180,10 @@ TEST(test_pass_pass, FuseToX8s8f32Matmul) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -8220,7 +8241,10 @@ TEST(test_pass_pass, FuseToX8s8f32MatmulBias) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -9001,7 +9025,10 @@ TEST(test_pass_pass, FuseToX8x8f32MatmulDivAdd) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_matmul_post_ops_gpu"
+                            : "x8x8x_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -9146,7 +9173,10 @@ TEST(test_pass_pass, FuseToX8s8bf16Matmul) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -9295,7 +9325,10 @@ TEST(test_pass_pass, FuseToX8s8bf16MatmulDiv) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -9492,7 +9525,10 @@ TEST(test_pass_pass, FuseToX8s8bf16MatmulScaleAdd) {
 
         agraph.finalize();
 
-        graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+        graph::pass::pass_base_ptr apass
+                = get_pass(engine_kind == graph::engine_kind::gpu
+                                ? "x8s8x_tc_matmul_post_ops_gpu"
+                                : "x8x8x_tc_matmul_post_ops_cpu");
         ASSERT_NE(apass, nullptr);
         apass->run(agraph);
         ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -9661,7 +9697,10 @@ TEST(test_pass_pass, FuseToX8s8bf16MatmulBias) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
     ASSERT_EQ(agraph.get_num_partitions(), 1U);
@@ -9839,7 +9878,10 @@ TEST(test_pass_pass, FuseToX8s8bf16MatmulBiasAddBF16) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     ASSERT_TRUE(apass);
     apass->run(agraph);
@@ -10023,7 +10065,10 @@ TEST(test_pass_pass, MixInt8AndBf16MatmulBiasGelu) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
 
@@ -10212,7 +10257,10 @@ TEST(test_pass_pass, MixInt8AndBf16MatmulGelu) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
 
@@ -10400,7 +10448,10 @@ TEST(test_pass_pass, MixInt8AndBf16MatmulBias) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
 
@@ -10581,7 +10632,10 @@ TEST(test_pass_pass, MixInt8AndBf16Matmul) {
 
     agraph.finalize();
 
-    graph::pass::pass_base_ptr apass = get_pass("x8x8x_tc_matmul_post_ops");
+    graph::pass::pass_base_ptr apass
+            = get_pass(engine_kind == graph::engine_kind::gpu
+                            ? "x8s8x_tc_matmul_post_ops_gpu"
+                            : "x8x8x_tc_matmul_post_ops_cpu");
     ASSERT_NE(apass, nullptr);
     apass->run(agraph);
 
@@ -11889,21 +11943,21 @@ TEST(test_pass_pass_system, NotFuseLayernormTypecast) {
 
     ASSERT_EQ(agraph.get_num_partitions(), 2U);
 
-    // partition 0: layernorm + tc
-    ASSERT_EQ(agraph.get_partitions()[0]->get_inputs().size(), 3U);
-    ASSERT_EQ(agraph.get_partitions()[0]->get_inputs()[0].id, 0U);
-    ASSERT_EQ(agraph.get_partitions()[0]->get_inputs()[1].id, 1U);
-    ASSERT_EQ(agraph.get_partitions()[0]->get_inputs()[2].id, 2U);
+    // partition 0: tc + quant
+    ASSERT_EQ(agraph.get_partitions()[0]->get_inputs().size(), 1U);
+    ASSERT_EQ(agraph.get_partitions()[0]->get_inputs()[0].id, 3U);
 
     ASSERT_EQ(agraph.get_partitions()[0]->get_outputs().size(), 1U);
-    ASSERT_EQ(agraph.get_partitions()[0]->get_outputs()[0].id, 4U);
+    ASSERT_EQ(agraph.get_partitions()[0]->get_outputs()[0].id, 5U);
 
-    // partition 1: quant
-    ASSERT_EQ(agraph.get_partitions()[1]->get_inputs().size(), 1U);
-    ASSERT_EQ(agraph.get_partitions()[1]->get_inputs()[0].id, 4U);
+    // partition 1: layernorm
+    ASSERT_EQ(agraph.get_partitions()[1]->get_inputs().size(), 3U);
+    ASSERT_EQ(agraph.get_partitions()[1]->get_inputs()[0].id, 0U);
+    ASSERT_EQ(agraph.get_partitions()[1]->get_inputs()[1].id, 1U);
+    ASSERT_EQ(agraph.get_partitions()[1]->get_inputs()[2].id, 2U);
 
     ASSERT_EQ(agraph.get_partitions()[1]->get_outputs().size(), 1U);
-    ASSERT_EQ(agraph.get_partitions()[1]->get_outputs()[0].id, 5U);
+    ASSERT_EQ(agraph.get_partitions()[1]->get_outputs()[0].id, 3U);
 }
 
 TEST(test_pass_pass, ShuffleFusion) {
@@ -15123,8 +15177,7 @@ TEST(test_pass_pass_system, LayernormWithSpecialAxis) {
     auto pm = pass::pass_manager_t(backend_ptr.get_pass_registry());
     pm.run_passes(agraph, "no_config");
 
-    if (!is_supported_dtype(data_type::bf16,
-                dnnl::impl::graph::dnnl_impl::platform::dir_t::FWD_I)) {
+    if (!is_supported_dtype(data_type::bf16)) {
         ASSERT_EQ(agraph.get_num_partitions(), 1U);
 
         auto p = agraph.get_partitions().front();

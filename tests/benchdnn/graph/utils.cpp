@@ -24,11 +24,6 @@
 #ifdef DNNL_WITH_SYCL
 #include "dnnl_sycl.hpp"
 #endif
-
-#if DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-#include "oneapi/dnnl/dnnl_graph_ocl.hpp"
-#endif
-
 #include "utils.hpp"
 #include "utils/timer.hpp"
 
@@ -40,14 +35,14 @@ bdnn_state_t convert_state(const dnnl_status_t &s) {
             return bdnn_state_t {res_state_t::PASSED};
         case dnnl_status_t::dnnl_out_of_memory:
             return bdnn_state_t {
-                    res_state_t::SKIPPED, skip_reason::not_enough_ram};
+                    res_state_t::SKIPPED, skip_reason_t::NOT_ENOUGH_RAM};
         case dnnl_status_t::dnnl_invalid_arguments:
             return bdnn_state_t {res_state_t::INVALID_ARGUMENTS};
         case dnnl_status_t::dnnl_unimplemented:
             return bdnn_state_t {res_state_t::UNIMPLEMENTED};
         case dnnl_status_t::dnnl_last_impl_reached:
             return bdnn_state_t {
-                    res_state_t::SKIPPED, skip_reason::skip_impl_hit};
+                    res_state_t::SKIPPED, skip_reason_t::SKIP_IMPL_HIT};
         case dnnl_status_t::dnnl_runtime_error:
             return bdnn_state_t {res_state_t::FAILED};
         case dnnl_status_t::dnnl_not_required:
@@ -56,10 +51,10 @@ bdnn_state_t convert_state(const dnnl_status_t &s) {
         case dnnl_status_t::dnnl_invalid_graph_op:
         case dnnl_status_t::dnnl_invalid_shape:
             return bdnn_state_t {
-                    res_state_t::SKIPPED, skip_reason::invalid_case};
+                    res_state_t::SKIPPED, skip_reason_t::INVALID_CASE};
         case dnnl_status_t::dnnl_invalid_data_type:
-            return bdnn_state_t {
-                    res_state_t::SKIPPED, skip_reason::data_type_not_supported};
+            return bdnn_state_t {res_state_t::SKIPPED,
+                    skip_reason_t::DATA_TYPE_NOT_SUPPORTED};
         default: assert(!"dnnl state is not found!"); return bdnn_state_t {};
     }
 }
@@ -78,11 +73,8 @@ void compiled_partition_executor(dnnl::graph::compiled_partition &cp,
 #if DNNL_GPU_RUNTIME == DNNL_RUNTIME_SYCL
         dnnl::graph::sycl_interop::execute(cp, stream, inputs,
                 const_cast<std::vector<dnnl::graph::tensor> &>(outputs));
-#elif DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-        dnnl::graph::ocl_interop::execute(cp, stream, inputs,
-                const_cast<std::vector<dnnl::graph::tensor> &>(outputs));
 #else
-        assert(!"unsupported gpu runtime");
+        assert(!"GPU only support DPCPP runtime now");
 #endif
     }
 }
@@ -1364,13 +1356,8 @@ cpp_engine_t::cpp_engine_t() {
                         sycl_malloc_wrapper, sycl_free_wrapper)};
         engine_ = make_engine_with_allocator(dnnl::engine::kind::gpu,
                 static_cast<size_t>(engine_index), alloc);
-#elif DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-        // needs to prepare ocl_malloc_wrapper and ocl_free_wrapper and call
-        // make_engine_with_allocator instead.
-        engine_ = dnnl::engine(
-                dnnl::engine::kind::gpu, static_cast<size_t>(engine_index));
 #else
-        assert(!"unsupported gpu runtime");
+        assert(!"GraphAPI GPU only support DPCPP runtime now");
 #endif
     }
 }
@@ -1381,26 +1368,6 @@ bool is_gc_backend() {
 #else
     return false;
 #endif
-}
-
-dnnl_data_type_t convert_dt(const dnnl::graph::logical_tensor::data_type dt) {
-    using graph_dt = dnnl::graph::logical_tensor::data_type;
-
-    switch (dt) {
-        case graph_dt::f16: return dnnl_f16;
-        case graph_dt::bf16: return dnnl_bf16;
-        case graph_dt::f32: return dnnl_f32;
-        case graph_dt::s32: return dnnl_s32;
-        case graph_dt::s8: return dnnl_s8;
-        case graph_dt::u8: return dnnl_u8;
-        // use u8 instead of boolean in the reference path
-        // dnn_graph_mem_t will use the data type from the logical tensor and the u8 data handle
-        case graph_dt::boolean: return dnnl_u8;
-        case graph_dt::f8_e5m2: return dnnl_f8_e5m2;
-        case graph_dt::f8_e4m3: return dnnl_f8_e4m3;
-        case graph_dt::undef:
-        default: return dnnl_data_type_undef;
-    }
 }
 
 } // namespace graph

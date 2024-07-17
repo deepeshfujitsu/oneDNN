@@ -143,8 +143,7 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
     skip_unimplemented_prelu_po(prb->attr, res, dnnl_pooling);
 
     if (is_cpu() && prb->src_dt() != prb->dst_dt()) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
+        res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
         return;
     }
 }
@@ -153,8 +152,7 @@ void skip_invalid_prb(const prb_t *prb, res_t *res) {
     // Average pooling without padding can't handle cases when kernel window is
     // applied to padded area only.
     if (prb->alg == avg_np && prb->has_ker_in_pad()) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::invalid_case;
+        res->state = SKIPPED, res->reason = INVALID_CASE;
         return;
     }
 }
@@ -189,7 +187,8 @@ bool cuda_check_correctness(const prb_t *prb,
 void setup_cmp(compare::compare_t &cmp, const prb_t *prb, data_kind_t kind,
         const args_t &ref_args) {
     // Threshold to compensate division error. CPU could live with 6.f coeff.
-    const float trh = 10.f * epsilon_dt(prb->dt[1]);
+    const float trh
+            = prb->alg == alg_t::max ? 0.f : 10.f * epsilon_dt(prb->dt[1]);
     cmp.set_threshold(trh);
     // Backward may have most zeroes for ker_in_pad with huge kernels problems.
     const float zero_percent = (prb->dir & FLAG_FWD) ? 99.f : 100.f;

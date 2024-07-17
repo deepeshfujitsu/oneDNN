@@ -46,7 +46,6 @@
 #include "dnnl_memory.hpp"
 
 #include "utils/cold_cache.hpp"
-#include "utils/dnnl_query.hpp"
 #include "utils/fill.hpp"
 #include "utils/stream_kind.hpp"
 
@@ -225,15 +224,12 @@ int test_persistent_cache_api(
         st = get_cache_blob(cache_blob, prim);
         if (st != OK) return res->state = FAILED, FAIL;
 
-        // The cross-engine and direct copy reorders are special primitives that
-        // may contain no kernels therefore the cache blob will always be empty,
-        // which is the correct behavior.
+        // The cross-engine reorder is a special primitive that may contain no
+        // kernels therefore the cache blob will always be empty, which is
+        // the correct behavior.
         if (cache_blob.empty()) {
             set_primitive_cache_capacity_without_clearing(old_capacity);
-            if (query_prim_kind(pd) == dnnl_reorder
-                    && (res->impl_name.find("cross_engine") != std::string::npos
-                            || res->impl_name.find("direct_copy")
-                                    != std::string::npos))
+            if (res->impl_name.find("cross_engine") != std::string::npos)
                 return OK;
 
             BENCHDNN_PRINT(
@@ -644,7 +640,7 @@ void skip_unimplemented_data_type(
                     && (dir & FLAG_INF));
     const bool has_f8_e4m3_support = is_gpu()
             || (is_cpu() && has_data_type_support(dnnl_f8_e4m3)
-                    && (dir & FLAG_INF));
+                    && (dir & FLAG_FWD));
 #else
     const bool has_bf16_support = is_gpu();
     // f16 is supported on GPU for inference only.
@@ -664,8 +660,7 @@ void skip_unimplemented_data_type(
             default: break;
         }
         if (need_skip) {
-            res->state = SKIPPED;
-            res->reason = skip_reason::data_type_not_supported;
+            res->state = SKIPPED, res->reason = DATA_TYPE_NOT_SUPPORTED;
             return;
         }
     }
@@ -689,8 +684,7 @@ void skip_unimplemented_sum_po(const attr_t &attr, res_t *res,
             if (e.sum.zero_point != 0) {
                 // Sum with zero-point is only supported for int8
                 if (!is_integral_dt(src_dt)) {
-                    res->state = SKIPPED;
-                    res->reason = skip_reason::case_not_supported;
+                    res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
                     return;
                 } else {
                     // Only quantized sum operand can have zero point
@@ -698,8 +692,7 @@ void skip_unimplemented_sum_po(const attr_t &attr, res_t *res,
                             = e.sum.dt == dnnl_data_type_undef ? dst_dt
                                                                : e.sum.dt;
                     if (!is_integral_dt(e_sum_dt)) {
-                        res->state = SKIPPED;
-                        res->reason = skip_reason::case_not_supported;
+                        res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
                         return;
                     }
                 }
@@ -707,22 +700,19 @@ void skip_unimplemented_sum_po(const attr_t &attr, res_t *res,
 
             // Sum with zero-point is not supported on GPU
             if (is_gpu() && e.sum.zero_point != 0) {
-                res->state = SKIPPED;
-                res->reason = skip_reason::case_not_supported;
+                res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
                 break;
             }
             // Each sum must have same data on CPU
             if (is_cpu() && e.sum.dt != sum_dt) {
-                res->state = SKIPPED;
-                res->reason = skip_reason::case_not_supported;
+                res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
                 break;
             }
             // Sum must have data type with the same size like dst on both
             if (dst_dt != dnnl_data_type_undef && sum_dt != dnnl_data_type_undef
                     && dnnl_data_type_size(dst_dt)
                             != dnnl_data_type_size(e.sum.dt)) {
-                res->state = SKIPPED;
-                res->reason = skip_reason::case_not_supported;
+                res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
                 return;
             }
         }
@@ -742,18 +732,14 @@ void skip_unimplemented_prelu_po(
         case dnnl_deconvolution:
         case dnnl_inner_product:
         case dnnl_matmul: return; break;
-        default:
-            res->state = SKIPPED;
-            res->reason = skip_reason::case_not_supported;
-            break;
+        default: res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED; break;
     }
 }
 
 void skip_unimplemented_arg_scale(const attr_t &attr, res_t *res) {
     for (const auto &arg_s : attr.scales.scales) {
         if (arg_s.second.policy != policy_t::COMMON) {
-            res->state = SKIPPED;
-            res->reason = skip_reason::case_not_supported;
+            res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
             return;
         }
     }
@@ -770,15 +756,13 @@ void skip_invalid_inplace(res_t *res, dnnl_data_type_t sdt,
     // General limitation of in-place mode is having same amount of memory on
     // input and output.
     if (sdt != ddt) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::invalid_case;
+        res->state = SKIPPED, res->reason = INVALID_CASE;
         return;
     }
 
     if (dtag == tag::any) return;
     if (stag != dtag) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::invalid_case;
+        res->state = SKIPPED, res->reason = INVALID_CASE;
         return;
     }
 }
@@ -793,19 +777,6 @@ int check_same_pd(const dnnl_primitive_desc_t &pd_no_attr, res_t *res) {
             "ERROR: attributes caused impl fallback from [%s] to [%s]\n",
             pd_no_attr_name.c_str(), res->impl_name.c_str());
     return FAIL;
-}
-
-// Checks if unexpected reference implementation was hit.
-int check_ref_impl_hit(res_t *res) {
-    if (!check_ref_impl) return OK;
-
-    const auto &impl_name = res->impl_name;
-    if (impl_name.find("ref") != std::string::npos) {
-        res->state = FAILED;
-        res->reason = "Ref Impl Not Expected";
-        return FAIL;
-    }
-    return OK;
 }
 
 bool is_cpu(const dnnl_engine_t &engine) {
@@ -1065,7 +1036,7 @@ static int check_total_size(
                     "[CHECK_MEM][%s]: Not enough device RAM for a problem.\n",
                     dir_c_str());
             res->state = SKIPPED;
-            res->reason = skip_reason::not_enough_ram;
+            res->reason = NOT_ENOUGH_RAM;
         }
 
         const bool all_allocation_fit_limit = std::all_of(
@@ -1082,7 +1053,7 @@ static int check_total_size(
                 });
         if (!all_allocation_fit_limit) {
             res->state = SKIPPED;
-            res->reason = skip_reason::not_enough_ram;
+            res->reason = NOT_ENOUGH_RAM;
         }
 
         BENCHDNN_PRINT((!fits_device_ram ? 2 : 6),
@@ -1120,7 +1091,7 @@ static int check_total_size(
         } else {
             res->state = SKIPPED;
         }
-        res->reason = skip_reason::not_enough_ram;
+        res->reason = NOT_ENOUGH_RAM;
     }
 
     BENCHDNN_PRINT((!fits_cpu_ram ? 2 : 6),
@@ -1310,39 +1281,6 @@ int get_memory_footprint(const_dnnl_primitive_desc_t const_pd, res_t *res) {
             const auto &po_md = query_md(const_pd, po_arg);
             add_md_size(po_md, check_mem_in_size_args);
         }
-    }
-
-    // Forward nearest neighbor down sampling (one or more bigger source
-    // dimensions than in destination) cases by the nature of the operation
-    // read only a part of a source tensor. Here we adjust the `ibytes` variable
-    // so that reported bandwidth numbers reflect the reality, otherwise
-    // final numbers are much higher than they should be.
-    dnnl_primitive_kind_t kind = query_prim_kind(const_pd);
-    dnnl_alg_kind_t alg = query_alg_kind(const_pd);
-    dnnl_prop_kind_t prop = query_prop_kind(const_pd);
-    if (is_fwd_prop_kind(prop) && kind == dnnl_resampling
-            && alg == dnnl_resampling_nearest) {
-        auto src = query_md(const_pd, DNNL_ARG_SRC);
-        auto dst = query_md(const_pd, DNNL_ARG_DST);
-        auto ndims = query_md_ndims(src);
-        auto src_pdims = query_md_padded_dims(src);
-        auto dst_pdims = query_md_padded_dims(dst);
-        dnnl_dim_t total_elems = 1;
-        dnnl_dim_t read_elems = 1;
-        for (int i = 0; i < ndims; i++) {
-            if (dst_pdims[i] < src_pdims[i]) {
-                total_elems *= src_pdims[i];
-                read_elems *= dst_pdims[i];
-            }
-        }
-        size_t in_size_no_scratchpad = check_mem_in_size_args.total_size_device
-                - check_mem_in_size_args.scratchpad_size;
-        // Assumes the input size is a multiple of total_elems
-        assert(in_size_no_scratchpad % total_elems == 0);
-        check_mem_in_size_args.total_size_device = in_size_no_scratchpad
-                        / static_cast<size_t>(total_elems)
-                        * static_cast<size_t>(read_elems)
-                + check_mem_in_size_args.scratchpad_size;
     }
 
     res->ibytes = check_mem_in_size_args.total_size_device;

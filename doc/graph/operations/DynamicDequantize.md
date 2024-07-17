@@ -44,7 +44,8 @@ element number of src tensor along the dimension axis.
 @note `zps` is a 1D tensor with offset values that map to zero. For `qtype` =
 `per-tensor`, there should be only one element in the zps tensor. For `qtype` =
 `per-channel`, the element number should be equal to the element number of input
-tensor along the dimension axis. If omitted, zps values are assumed to be zero.
+tensor along the dimension axis. If not specified, the library can assume the
+operator is symmetric de-quantization and perform kernel optimization accordingly.
 
 ### Outputs
 

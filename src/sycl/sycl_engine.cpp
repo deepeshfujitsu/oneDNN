@@ -31,7 +31,7 @@ status_t sycl_engine_factory_t::engine_create(
     auto dev_type = (engine_kind_ == engine_kind::cpu)
             ? ::sycl::info::device_type::cpu
             : ::sycl::info::device_type::gpu;
-    auto devices = xpu::sycl::get_devices(dev_type);
+    auto devices = get_sycl_devices(dev_type);
     auto &dev = devices[index];
 
     auto exception_handler = [](const ::sycl::exception_list &eptr_list) {
@@ -61,38 +61,43 @@ status_t sycl_engine_factory_t::engine_create(engine_t **engine,
         const ::sycl::device &dev, const ::sycl::context &ctx,
         size_t index) const {
     // Validate device and context.
-    VERROR_ENGINE(xpu::sycl::dev_ctx_consistency_check(dev, ctx),
+    VERROR_ENGINE(dev_ctx_consistency_check(dev, ctx),
             status::invalid_arguments, VERBOSE_DEVICE_CTX_MISMATCH);
 
 #ifdef DNNL_SYCL_CUDA
-    if (xpu::sycl::is_nvidia_gpu(dev))
-        return gpu::nvidia::engine_create(
+    if (gpu::nvidia::is_nvidia_gpu(dev))
+        return gpu::nvidia::cuda_engine_create(
                 engine, engine_kind_, dev, ctx, index);
 #endif
 
 #ifdef DNNL_SYCL_HIP
-    if (xpu::sycl::is_amd_gpu(dev))
+    if (gpu::amd::is_amd_gpu(dev))
         return gpu::amd::hip_engine_create(
                 engine, engine_kind_, dev, ctx, index);
 #endif
     VERROR_ENGINE(!(engine_kind_ == engine_kind::cpu && !dev.is_cpu()
-                          && !xpu::sycl::is_host(dev)),
+                          && !is_host(dev)),
             status::invalid_arguments, VERBOSE_BAD_ENGINE_KIND);
     VERROR_ENGINE(!(engine_kind_ == engine_kind::gpu && !dev.is_gpu()),
             status::invalid_arguments, VERBOSE_BAD_ENGINE_KIND);
 
-#if DNNL_CPU_RUNTIME == DNNL_RUNTIME_SYCL
-    if (engine_kind_ == engine_kind::cpu) {
-        return cpu::sycl::engine_create(engine, dev, ctx, index);
-    }
-
+#if DNNL_CPU_RUNTIME != DNNL_RUNTIME_NONE
+    std::unique_ptr<sycl_engine_base_t, engine_deleter_t> sycl_engine(
+            (engine_kind_ == engine_kind::cpu)
+                    ? static_cast<sycl_engine_base_t *>(
+                            new sycl_cpu_engine_t(dev, ctx, index))
+                    : static_cast<sycl_engine_base_t *>(
+                            new gpu::sycl::sycl_gpu_engine_t(dev, ctx, index)));
 #else
+
     VERROR_ENGINE(engine_kind_ != engine_kind::cpu, status::unimplemented,
             VERBOSE_BAD_ENGINE_KIND);
-#endif
 
     std::unique_ptr<sycl_engine_base_t, engine_deleter_t> sycl_engine(
-            new gpu::sycl::sycl_gpu_engine_t(dev, ctx, index));
+            static_cast<sycl_engine_base_t *>(
+                    new gpu::sycl::sycl_gpu_engine_t(dev, ctx, index)));
+
+#endif
     if (!sycl_engine) return status::out_of_memory;
 
     CHECK(sycl_engine->init());

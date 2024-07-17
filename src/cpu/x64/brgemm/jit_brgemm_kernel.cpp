@@ -57,40 +57,6 @@ struct jit_brgemm_kernel_t : public jit_generator {
         const int is_ldb_tail = brg.ldb_tail ? 1 : 0;
         is_ldb_loop_ = brg.ldb2 + is_ldb2_tail + is_ldb_tail > 1;
 
-        bool has_f8_e5m2_binary_postops = false;
-        bool has_f8_e4m3_binary_postops = false;
-        if (brg.with_binary) {
-            const auto &post_ops = brg.attr()->post_ops_;
-            for (int i = 0; i < post_ops.len(); i++) {
-                const auto &entry = post_ops.entry_[i];
-                if (!entry.is_binary()) continue;
-                has_f8_e5m2_binary_postops = entry.binary.src1_desc.data_type
-                        == data_type::f8_e5m2;
-                has_f8_e4m3_binary_postops = entry.binary.src1_desc.data_type
-                        == data_type::f8_e4m3;
-            }
-        }
-
-        if (brg.is_fp8_via_convert() || has_f8_e5m2_binary_postops
-                || has_f8_e4m3_binary_postops) {
-            if (one_of(data_type::f8_e5m2, brg.dt_a, brg.dt_b, brg.dt_c,
-                        brg.dt_d)
-                    || has_f8_e5m2_binary_postops)
-                // Note: avoid using 'vmm0' since it is used as
-                // 'fp8_to_f16_upconvert()' param and would collision with these
-                // emulation vmms
-                f8_e5m2_emulator_ = utils::make_unique<fp8_emulation_e5m2_t>(
-                        this, xmm_fp8_emu_aux2, xmm_fp8_emu_aux3,
-                        xmm_fp8_emu_aux4, kmask_fp8_aux, reg64_fp8_aux);
-            if (one_of(data_type::f8_e4m3, brg.dt_a, brg.dt_b, brg.dt_c,
-                        brg.dt_d)
-                    || has_f8_e4m3_binary_postops)
-                f8_e4m3_emulator_ = utils::make_unique<fp8_emulation_e4m3_t>(
-                        this, xmm_fp8_emu_aux1, xmm_fp8_emu_aux2,
-                        xmm_fp8_emu_aux3, xmm_fp8_emu_aux4, xmm_fp8_emu_aux5,
-                        reg64_fp8_aux);
-        }
-
         if (brg.with_eltwise || brg.with_binary || brg.with_sum) {
 
             static constexpr bool preserve_gpr = true;
@@ -107,7 +73,6 @@ struct jit_brgemm_kernel_t : public jit_generator {
                             broadcasting_strategy_t::per_mb_w,
                             broadcasting_strategy_t::per_w,
                             broadcasting_strategy_t::batch,
-                            broadcasting_strategy_t::spatial,
                             broadcasting_strategy_t::no_broadcast};
             const binary_injector::rhs_arg_static_params_t rhs_sp {
                     static_cast<size_t>(vmm_tmp(0).getIdx()), this->r14,
@@ -115,10 +80,8 @@ struct jit_brgemm_kernel_t : public jit_generator {
                     GET_OFF(post_ops_binary_rhs_arg_vec), GET_OFF(data_C_ptr_),
                     dst_md_wrapper, static_cast<size_t>(brg.ldb_tail),
                     ld_tail_mask, use_exact_tail_scalar_bcast};
-
-            const binary_injector::static_params_t bsp {this->param1,
-                    enabled_bcast_strategy, rhs_sp, f8_e5m2_emulator_.get(),
-                    f8_e4m3_emulator_.get()};
+            const binary_injector::static_params_t bsp {
+                    this->param1, enabled_bcast_strategy, rhs_sp};
 
             auto st = safe_ptr_assign(postops_injector_,
                     po_injector_t::create(
@@ -136,6 +99,22 @@ struct jit_brgemm_kernel_t : public jit_generator {
                     bf16_emu_reserv_1(), bf16_emu_reserv_2(),
                     bf16_emu_reserv_3(), bf16_emu_scratch, bf16_emu_reserv_4(),
                     bf16_emu_reserv_4());
+
+        if (brg.is_fp8_via_convert()
+                && one_of(data_type::f8_e5m2, brg.dt_a, brg.dt_b, brg.dt_c,
+                        brg.dt_d))
+            // Note: avoid using 'vmm0' since it is used as
+            // 'fp8_to_f16_upconvert()' param and would collision with these
+            // emulation vmms
+            f8_e5m2_emulator_ = utils::make_unique<fp8_emulation_e5m2_t>(this,
+                    xmm_fp8_emu_aux2, xmm_fp8_emu_aux3, xmm_fp8_emu_aux4,
+                    kmask_fp8_aux, reg64_fp8_aux);
+        if (brg.is_fp8_via_convert()
+                && one_of(data_type::f8_e4m3, brg.dt_a, brg.dt_b, brg.dt_c,
+                        brg.dt_d))
+            f8_e4m3_emulator_ = utils::make_unique<fp8_emulation_e4m3_t>(this,
+                    xmm_fp8_emu_aux1, xmm_fp8_emu_aux2, xmm_fp8_emu_aux3,
+                    xmm_fp8_emu_aux4, xmm_fp8_emu_aux5, reg64_fp8_aux);
     }
 
     DECLARE_CPU_JIT_AUX_FUNCTIONS(jit_brgemm_kernel_t)
@@ -153,8 +132,8 @@ private:
     using po_injector_t = injector::jit_uni_postops_injector_base_t<Vmm>;
     std::unique_ptr<po_injector_t> postops_injector_;
     std::unique_ptr<bf16_emulation_t> bf16_emu_;
-    std::unique_ptr<fp8_emulation_e5m2_t> f8_e5m2_emulator_;
-    std::unique_ptr<fp8_emulation_e4m3_t> f8_e4m3_emulator_;
+    std::unique_ptr<fp8_emulation_base_t> f8_e5m2_emulator_;
+    std::unique_ptr<fp8_emulation_base_t> f8_e4m3_emulator_;
 
     Xbyak::Label avx_tail_mask_;
     Xbyak::Label sum_zp_scale_data_;
@@ -664,15 +643,21 @@ void jit_brgemm_kernel_t<Wmm>::cvt2ps(data_type_t type_in, const Vmm vmm_in,
         case data_type::s8: uni_vpmovsxbd(vmm, op); break;
         case data_type::u8: uni_vpmovzxbd(vmm, op); break;
         case data_type::f8_e5m2:
-            if (brg.is_fp8_via_convert())
+            if (brg.is_fp8_via_convert()) {
+                // note: unoptimized, probably move stack use outside loop
+                mov(ptr[rsp + reg_val_tmp_1_], reg64_fp8_aux);
                 f8_e5m2_emulator_->vcvt_f8_to_f32(vmm, op);
-            else
+                mov(reg64_fp8_aux, ptr[rsp + reg_val_tmp_1_]);
+            } else
                 assert(!"Error, native conversion unsupported");
             break;
         case data_type::f8_e4m3:
-            if (brg.is_fp8_via_convert())
+            if (brg.is_fp8_via_convert()) {
+                // note: unoptimized, probably move stack use outside loop
+                mov(ptr[rsp + reg_val_tmp_1_], reg64_fp8_aux);
                 f8_e4m3_emulator_->vcvt_f8_to_f32(vmm, op);
-            else
+                mov(reg64_fp8_aux, ptr[rsp + reg_val_tmp_1_]);
+            } else
                 assert(!"Error, native conversion unsupported");
             break;
 
@@ -1090,8 +1075,6 @@ void jit_brgemm_kernel_t<Wmm>::apply_alpha_beta(
     if (brg.is_runtime_ldc && bd_block > 1)
         mov(ptr[rsp + reg_aux_C_backup_offs_], reg_aux_C);
 
-    if (brg.is_fp8_via_convert()) mov(ptr[rsp + reg_val_tmp_1_], reg64_fp8_aux);
-
     for_(int bd = 0; bd < bd_block; bd++)
     for (int ld = 0; ld < ld_block2; ld++) {
         const bool is_tail = is_ld_tail && ld + 1 == ld_block2;
@@ -1124,8 +1107,6 @@ void jit_brgemm_kernel_t<Wmm>::apply_alpha_beta(
         if (brg.is_runtime_ldc && bd_block > 1 && ld == ld_block2 - 1)
             add(reg_aux_C, ptr[rsp + reg_C_shift_bytes_offs_]);
     }
-
-    if (brg.is_fp8_via_convert()) mov(reg64_fp8_aux, ptr[rsp + reg_val_tmp_1_]);
 
     if (brg.is_runtime_ldc && bd_block > 1)
         mov(reg_aux_C, ptr[rsp + reg_aux_C_backup_offs_]);
@@ -1206,11 +1187,6 @@ void jit_brgemm_kernel_t<Wmm>::apply_post_ops(
                     }
                 }
 
-                // We have to use push/pop to preserve reg64_fp8_aux because we
-                // are in the range of conditional_register_preserve_guard_t
-                // objects above that use push/pop
-                if (brg.is_fp8_via_convert()) push(reg64_fp8_aux);
-
                 for_(int bd = bd_start; bd < bd_end; bd++)
                 for (int ld = 0; ld < ld_block2; ld++) {
                     const auto vmm = accm(ld_block2, bd, ld);
@@ -1233,7 +1209,6 @@ void jit_brgemm_kernel_t<Wmm>::apply_post_ops(
                     } else
                         uni_vaddps(vmm, vmm, vmm_prev_dst);
                 }
-                if (brg.is_fp8_via_convert()) pop(reg64_fp8_aux);
             }
 
             if (reset_avx_tail_mask) maybe_set_avx_mask(is_ld_tail);
@@ -1294,8 +1269,6 @@ void jit_brgemm_kernel_t<Wmm>::store_accumulators_apply_post_ops(
     }
 
     if (brg.with_bias) { mov(reg_aux_bias, ptr[rsp + reg_aux_bias_offs_]); }
-
-    if (brg.is_fp8_via_convert()) mov(ptr[rsp + reg_val_tmp_1_], reg64_fp8_aux);
     for (int ld = 0; ld < ld_block2; ld++) {
         auto vmm_bias = vmm_tmp(0);
         if (brg.with_bias) {
@@ -1310,7 +1283,6 @@ void jit_brgemm_kernel_t<Wmm>::store_accumulators_apply_post_ops(
             if (brg.with_bias) uni_vaddps(vmm, vmm, vmm_bias);
         }
     }
-    if (brg.is_fp8_via_convert()) mov(reg64_fp8_aux, ptr[rsp + reg_val_tmp_1_]);
 
     if (postops_injector_)
         apply_post_ops(bd_block, ld_block2, ldb_and_bdb_offset, is_ld_tail);
@@ -1340,9 +1312,6 @@ void jit_brgemm_kernel_t<Wmm>::store_accumulators_apply_post_ops(
                 uni_vcvtdq2ps(vmm_zp_c, vmm_zp_c);
             }
         }
-        if (brg.is_fp8_via_convert())
-            mov(ptr[rsp + reg_val_tmp_1_], reg64_fp8_aux);
-
         for (int ld = 0; ld < ld_block2; ld++) {
             const bool is_tail = is_ld_tail && ld + 1 == ld_block2;
             if (brg.zp_type_c == brgemm_broadcast_t::per_n) {
@@ -1363,8 +1332,6 @@ void jit_brgemm_kernel_t<Wmm>::store_accumulators_apply_post_ops(
                 uni_vaddps(vmm, vmm, vmm_zp_c);
             }
         }
-        if (brg.is_fp8_via_convert())
-            mov(reg64_fp8_aux, ptr[rsp + reg_val_tmp_1_]);
     }
 
     const bool dt_requires_saturation
@@ -1812,10 +1779,12 @@ void jit_brgemm_kernel_t<Wmm>::restore_A_B_matrices() {
         mov(reg_aux1_A, reg_A);
         mov(reg_aux1_B, reg_B);
 
-        if (brg.type == brgemm_offs)
-            mov(reg_offs_batch, ptr[rsp + origin_offs_batch_offs_]);
-        else
-            mov(reg_strd_batch, ptr[rsp + origin_strd_batch_offs_]);
+        if (restore_reg_batch) {
+            if (brg.type == brgemm_offs)
+                mov(reg_offs_batch, ptr[rsp + origin_offs_batch_offs_]);
+            else
+                mov(reg_strd_batch, ptr[rsp + origin_strd_batch_offs_]);
+        }
     }
 }
 

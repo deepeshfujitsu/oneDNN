@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2021-2024 Intel Corporation
+* Copyright 2021-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -38,10 +38,6 @@
 
 #ifdef DNNL_WITH_SYCL
 #include "graph/utils/sycl_check.hpp"
-#endif
-
-#if DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-#include <CL/cl.h>
 #endif
 
 namespace std {
@@ -353,14 +349,6 @@ public:
             const std::vector<tensor_t> &outputs,
             const std::vector<::sycl::event> &sycl_deps,
             ::sycl::event *sycl_event)
-            = 0;
-#endif
-
-#if DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-    virtual status_t execute_ocl(const stream_t *astream,
-            const std::vector<tensor_t> &inputs,
-            const std::vector<tensor_t> &outputs,
-            const std::vector<cl_event> &ocl_deps, cl_event *ocl_event)
             = 0;
 #endif
 

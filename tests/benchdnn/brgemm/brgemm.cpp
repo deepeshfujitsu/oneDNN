@@ -43,8 +43,9 @@ struct dnnl_api_traits<dnnl::impl::cpu::x64::brgemm_kernel_t *> {
         DNN_SAFE_V(dnnl::impl::cpu::x64::brgemm_kernel_destroy(t));
     }
 };
+#endif
 
-#elif defined(DNNL_AARCH64) && DNNL_AARCH64 == 1 \
+#if defined(DNNL_AARCH64) && DNNL_AARCH64 == 1 \
         && DNNL_CPU_RUNTIME != DNNL_RUNTIME_NONE
 template <>
 struct dnnl_api_traits<dnnl::impl::cpu::aarch64::brgemm_kernel_t *> {
@@ -59,10 +60,11 @@ namespace brgemm {
 #if DNNL_CPU_RUNTIME != DNNL_RUNTIME_NONE
 #if defined(DNNL_X64) && DNNL_X64 == 1
 #define brg_x64
-#define namespace_impl dnnl::impl::cpu::x64
-#elif defined(DNNL_AARCH64) && DNNL_AARCH64 == 1
+#define namspace_impl dnnl::impl::cpu::x64
+#endif
+#if defined(DNNL_AARCH64) && DNNL_AARCH64 == 1
 #define brg_aarch64
-#define namespace_impl dnnl::impl::cpu::aarch64
+#define namspace_impl dnnl::impl::cpu::aarch64
 #endif
 #endif
 
@@ -77,14 +79,8 @@ namespace brgemm {
 ///     integers.
 ///
 dnnl_status_t brgemm_attr_init(
-        namespace_impl::brgemm_attr_t *brgattr, const prb_t *prb) {
-    using namespace namespace_impl;
-
-    // `max_bs` is handled directly through the driver interface.
-    brgattr->max_bs = prb->batch_size;
-
-    // `fpmath_mode` is handled directly through the driver interface.
-    brgattr->fpmath_mode = prb->attr.fpmath_mode.mode;
+        namspace_impl::brgemm_attr_t *brgattr, const prb_t *prb) {
+    using namespace namspace_impl;
 
     const auto &str = prb->brgemm_attr;
     if (str.empty()) return dnnl_success;
@@ -153,6 +149,12 @@ dnnl_status_t brgemm_attr_init(
                     std::stoi(value_str));
     }
 
+    // `max_bs` is handled directly through the driver interface.
+    brgattr->max_bs = prb->batch_size;
+
+    // `fpmath_mode` is handled directly through the driver interface.
+    brgattr->fpmath_mode = prb->attr.fpmath_mode.mode;
+
     return dnnl_success;
 }
 
@@ -176,15 +178,6 @@ std::string prepare_wei_format_string(
     }
 
     return wtag;
-}
-
-namespace_impl::brgemm_batch_kind_t str2batch_kind(const std::string &str) {
-    if (str == "addr")
-        return namespace_impl::brgemm_batch_kind_t::brgemm_addr;
-    else if (str == "offs")
-        return namespace_impl::brgemm_batch_kind_t::brgemm_offs;
-    assert(!"Unsupported batch kind value");
-    return namespace_impl::brgemm_batch_kind_t::brgemm_batch_kind_undef;
 }
 
 int fill_data(data_kind_t kind, const prb_t *prb, const cfg_t &cfg,
@@ -249,8 +242,7 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
     };
     if (!IMPLICATION(is_xf16(prb->bia_dt) || is_xf16(prb->dst_dt()),
                 is_xf16(prb->wei_dt()))) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
+        res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
         return;
     }
     skip_unimplemented_data_type(
@@ -263,7 +255,7 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
     // Unconditionally skip remaining unimplemented cases.
     // TODO: stop doing it.
     res->state = SKIPPED;
-    res->reason = skip_reason::case_not_supported;
+    res->reason = CASE_NOT_SUPPORTED;
 }
 
 void skip_invalid_prb(const prb_t *prb, res_t *res) {
@@ -276,8 +268,7 @@ void skip_invalid_prb(const prb_t *prb, res_t *res) {
     const bool req_s8_comp = prb->src_dt() == dnnl_s8;
     const bool req_zp_comp = !prb->attr.zero_points.is_def(DNNL_ARG_SRC);
     if (is_bad_ldb && (req_s8_comp || req_zp_comp)) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
+        res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED;
         return;
     }
 }
@@ -292,23 +283,14 @@ void setup_cmp(compare::compare_t &cmp, const prb_t *prb, data_kind_t kind,
 
 // A special wrapper needed to match internal infrastructure.
 dnnl_status_t brgemm_kernel_execute_postops_wrapper(
-        const namespace_impl::brgemm_kernel_t *brgemm_kernel,
-        namespace_impl::brgemm_batch_kind_t batch_kind, int batch_size,
-        const void *src_ptr, const void *wei_ptr,
-        const namespace_impl::brgemm_batch_element_t *batch_element,
+        const namspace_impl::brgemm_kernel_t *brgemm_kernel, int batch_size,
+        const namspace_impl::brgemm_batch_element_t *batch_element,
         void *acc_ptr, void *dst_ptr,
-        const namespace_impl::brgemm_post_ops_data_t &post_ops_data,
+        const namspace_impl::brgemm_post_ops_data_t &post_ops_data,
         void *scratchpad_ptr, const dnnl_stream_t &stream,
         const std::vector<dnnl_exec_arg_t> &dnnl_args) {
-
-    if (batch_kind == namespace_impl::brgemm_batch_kind_t::brgemm_addr) {
-        brgemm_kernel_execute_postops(brgemm_kernel, batch_size, batch_element,
-                acc_ptr, dst_ptr, post_ops_data, scratchpad_ptr);
-    } else if (batch_kind == namespace_impl::brgemm_batch_kind_t::brgemm_offs) {
-        brgemm_kernel_execute_postops(brgemm_kernel, batch_size, src_ptr,
-                wei_ptr, batch_element, acc_ptr, dst_ptr, post_ops_data,
-                scratchpad_ptr);
-    }
+    brgemm_kernel_execute_postops(brgemm_kernel, batch_size, batch_element,
+            acc_ptr, dst_ptr, post_ops_data, scratchpad_ptr);
     return dnnl_success;
 }
 
@@ -339,15 +321,15 @@ int doit(const prb_t *prb, res_t *res) {
     auto dst_md = dnn_mem_t::init_md(prb->ndims, prb->dst_dims.data(),
             prb->dst_dt(), prb->dtag, dst_strides);
 
-    using namespace namespace_impl;
+    using namespace namspace_impl;
 #if defined(brg_x64)
     brgemm_desc_t brgemm_desc;
-#elif defined(brg_aarch64)
+#else
     brgemm_t brgemm_desc;
 #endif
     // Supports only address model for now as only affects the way memory is
     // passed to `brgemm_batch_element_t` object.
-    brgemm_batch_kind_t batch_kind = str2batch_kind(prb->batch_kind);
+    brgemm_batch_kind_t batch_kind = brgemm_batch_kind_t::brgemm_addr;
     brgemm_layout_t layout = brgemm_layout_t::brgemm_row_major;
 
     // Pass `isa_undef` for now since internal work with it or rather isa bits
@@ -538,17 +520,10 @@ int doit(const prb_t *prb, res_t *res) {
             (long)src_batch_offset, (long)wei_batch_offset);
 
     for (size_t i = 0; i < v_batch_element.size(); i++) {
-        if (batch_kind == brgemm_batch_kind_t::brgemm_addr) {
-            v_batch_element[i].ptr.A
-                    = src_ptr + i * src_batch_offset * src_dt.sizeof_dt();
-            v_batch_element[i].ptr.B
-                    = wei_ptr + i * wei_batch_offset * wei_dt.sizeof_dt();
-        } else if (batch_kind == brgemm_batch_kind_t::brgemm_offs) {
-            v_batch_element[i].offset.A
-                    = i * src_batch_offset * src_dt.sizeof_dt();
-            v_batch_element[i].offset.B
-                    = i * wei_batch_offset * wei_dt.sizeof_dt();
-        }
+        v_batch_element[i].ptr.A
+                = src_ptr + i * src_batch_offset * src_dt.sizeof_dt();
+        v_batch_element[i].ptr.B
+                = wei_ptr + i * wei_batch_offset * wei_dt.sizeof_dt();
     }
 
     // Brgemm takes single pointer oscale, but relies on a combination of arg
@@ -594,16 +569,12 @@ int doit(const prb_t *prb, res_t *res) {
         // It requires enabling f32 -> u8 reorder with compensation on the
         // library side. When enabled, it produces incorrect results for cases
         // with K=1. Likely there's a bug inside. Postpone supporting it.
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
-        return OK;
+        return res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED, OK;
     }
 
     if (prb->attr.post_ops.binary_index() >= 0) {
         // TODO: binary post-op is not supported yet.
-        res->state = SKIPPED;
-        res->reason = skip_reason::case_not_supported;
-        return OK;
+        return res->state = SKIPPED, res->reason = CASE_NOT_SUPPORTED, OK;
     }
 
     brgemm_post_ops_data_t post_ops_data(
@@ -633,15 +604,9 @@ int doit(const prb_t *prb, res_t *res) {
     char *dst_ptr = (char *)dst_dt;
     if (use_dst_as_acc) acc_ptr = dst_ptr;
 
-    if (batch_kind == brgemm_batch_kind_t::brgemm_addr) {
-        brgemm_kernel_execute_postops(brgemm_kernel, prb->batch_size,
-                v_batch_element.data(), acc_ptr, dst_ptr, post_ops_data,
-                scratchpad_ptr);
-    } else if (batch_kind == brgemm_batch_kind_t::brgemm_offs) {
-        brgemm_kernel_execute_postops(brgemm_kernel, prb->batch_size, src_ptr,
-                wei_ptr, v_batch_element.data(), acc_ptr, dst_ptr,
-                post_ops_data, scratchpad_ptr);
-    }
+    brgemm_kernel_execute_postops(brgemm_kernel, prb->batch_size,
+            v_batch_element.data(), acc_ptr, dst_ptr, post_ops_data,
+            scratchpad_ptr);
     res->state = EXECUTED;
 
     if (has_bench_mode_bit(mode_bit_t::corr)) {
@@ -663,9 +628,9 @@ int doit(const prb_t *prb, res_t *res) {
 
     // Create a bind to match internals to run performance measurements.
     perf_function_t perf_func = std::bind(brgemm_kernel_execute_postops_wrapper,
-            brgemm_kernel_, batch_kind, prb->batch_size, src_ptr, wei_ptr,
-            v_batch_element.data(), acc_ptr, dst_ptr, post_ops_data,
-            scratchpad_ptr, std::placeholders::_1, std::placeholders::_2);
+            brgemm_kernel_, prb->batch_size, v_batch_element.data(), acc_ptr,
+            dst_ptr, post_ops_data, scratchpad_ptr, std::placeholders::_1,
+            std::placeholders::_2);
     measure_perf(prb->ctx_exe, res, perf_func, args);
 
 #if defined(brg_x64)

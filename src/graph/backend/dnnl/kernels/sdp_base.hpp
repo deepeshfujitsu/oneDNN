@@ -33,7 +33,6 @@
 #include "graph/backend/dnnl/utils.hpp"
 
 #include "graph/backend/dnnl/kernels/sdp.hpp"
-#include "graph/backend/dnnl/kernels/sdp_primitive.hpp"
 #include "graph/backend/dnnl/passes/compile_ops.hpp"
 #include "graph/backend/dnnl/passes/constant_propagation.hpp"
 #include "graph/backend/dnnl/passes/insert_ops.hpp"
@@ -61,29 +60,24 @@ public:
             const engine_t *g_engine,
             const std::vector<logical_tensor_t> &inputs,
             const std::vector<logical_tensor_t> &outputs) override {
-        const engine_kind_t ekind = g_engine->kind();
-        const bool enable_decomp
-                = ekind == engine_kind::cpu && enable_decomp_kernel();
-        const bool enable_prim = (ekind == engine_kind::gpu) && !quantized;
-        status_t subkernel_status = status::unimplemented;
-
-        if (enable_prim) {
-            kernel = std::make_shared<sdp_primitive_kernel_t>();
-            subkernel_status
-                    = kernel->compile_impl(part, g_engine, inputs, outputs);
-        }
-
-        if (subkernel_status != status::success && enable_decomp) {
+#ifndef DNNL_WITH_SYCL
+        status_t sdp_decomp_status = status::success;
+        bool enable_decomp = enable_decomp_kernel();
+        if (enable_decomp) {
             kernel = std::make_shared<sdp_decomp_kernel_t<quantized, dt>>();
-            subkernel_status
+            sdp_decomp_status
                     = kernel->compile_impl(part, g_engine, inputs, outputs);
         }
-
-        if (subkernel_status != status::success) {
+        if (!enable_decomp || sdp_decomp_status != status::success) {
             kernel = std::make_shared<larger_partition_kernel_t>();
             return kernel->compile_impl(part, g_engine, inputs, outputs);
         }
-        return subkernel_status;
+        return sdp_decomp_status;
+
+#else
+        kernel = std::make_shared<larger_partition_kernel_t>();
+        return kernel->compile_impl(part, g_engine, inputs, outputs);
+#endif
     }
 
     // The fuction is used to check if enable the decompostion kernel based on
@@ -115,15 +109,6 @@ public:
             ::sycl::event *sycl_event) override {
         return kernel->sycl_execute_impl(
                 g_stream, inputs, outputs, sycl_deps, sycl_event);
-    }
-#endif
-
-#if DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-    status_t ocl_execute_impl(const stream_t *g_stream,
-            const std::vector<tensor_t> &inputs,
-            const std::vector<tensor_t> &outputs,
-            const std::vector<cl_event> &deps, cl_event *event) override {
-        return kernel->ocl_execute_impl(g_stream, inputs, outputs, deps, event);
     }
 #endif
 };

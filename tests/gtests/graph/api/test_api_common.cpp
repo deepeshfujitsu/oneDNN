@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright 2020-2024 Intel Corporation
+* Copyright 2020-2023 Intel Corporation
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -26,8 +26,7 @@ void api_test_dnnl_engine_create(
         dnnl_engine_t *engine, dnnl_engine_kind_t engine_kind) {
     if (engine_kind == dnnl_cpu) {
 #if DNNL_CPU_RUNTIME == DNNL_RUNTIME_SYCL
-        static ::sycl::device dev {
-                dnnl::impl::xpu::sycl::compat::cpu_selector_v};
+        static ::sycl::device dev {dnnl::impl::sycl::compat::cpu_selector_v};
         static ::sycl::context ctx {dev};
         if (!allocator_handle) {
             ASSERT_EQ(dnnl_graph_sycl_interop_allocator_create(
@@ -59,8 +58,7 @@ void api_test_dnnl_engine_create(
         *engine = engine_handle.engine;
     } else {
 #if DNNL_GPU_RUNTIME == DNNL_RUNTIME_SYCL
-        static ::sycl::device dev {
-                dnnl::impl::xpu::sycl::compat::gpu_selector_v};
+        static ::sycl::device dev {dnnl::impl::sycl::compat::gpu_selector_v};
         static ::sycl::context ctx {dev};
         if (!allocator_handle) {
             ASSERT_EQ(dnnl_graph_sycl_interop_allocator_create(
@@ -74,11 +72,6 @@ void api_test_dnnl_engine_create(
                     dnnl_success);
         };
         *engine = engine_handle.engine;
-#elif DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-        static dnnl::engine eng(dnnl::engine::kind::gpu, 0);
-        *engine = eng.get();
-#else
-        throw "unsupported gpu runtime";
 #endif
     }
 }
@@ -91,8 +84,7 @@ void api_test_dnnl_graph_graph_create(
 dnnl::engine &cpp_api_test_dnnl_engine_create(dnnl::engine::kind engine_kind) {
     if (engine_kind == dnnl::engine::kind::cpu) {
 #if DNNL_CPU_RUNTIME == DNNL_RUNTIME_SYCL
-        static ::sycl::device dev {
-                dnnl::impl::xpu::sycl::compat::cpu_selector_v};
+        static ::sycl::device dev {dnnl::impl::sycl::compat::cpu_selector_v};
         static ::sycl::context ctx {dev};
         static dnnl::graph::allocator alloc
                 = dnnl::graph::sycl_interop::make_allocator(
@@ -110,7 +102,7 @@ dnnl::engine &cpp_api_test_dnnl_engine_create(dnnl::engine::kind engine_kind) {
     }
 
 #if DNNL_GPU_RUNTIME == DNNL_RUNTIME_SYCL
-    static ::sycl::device dev {dnnl::impl::xpu::sycl::compat::gpu_selector_v};
+    static ::sycl::device dev {dnnl::impl::sycl::compat::gpu_selector_v};
     static ::sycl::context ctx {dev};
     static dnnl::graph::allocator alloc
             = dnnl::graph::sycl_interop::make_allocator(

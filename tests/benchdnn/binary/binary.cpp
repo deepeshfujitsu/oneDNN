@@ -109,16 +109,14 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
         bool is_bf16u8 = (dts[0] == dnnl_bf16 && dts[1] == dnnl_bf16
                 && dts[2] == dnnl_u8);
         if (is_bf16u8 && have_post_ops) {
-            res->state = SKIPPED;
-            res->reason = skip_reason::data_type_not_supported;
+            res->state = SKIPPED, res->reason = DATA_TYPE_NOT_SUPPORTED;
             return;
         }
 
         // gpu does not support s32
         for (const auto &dt : dts)
             if (dt == dnnl_s32) {
-                res->state = SKIPPED;
-                res->reason = skip_reason::data_type_not_supported;
+                res->state = SKIPPED, res->reason = DATA_TYPE_NOT_SUPPORTED;
                 return;
             }
     }
@@ -136,16 +134,14 @@ void skip_invalid_prb(const prb_t *prb, res_t *res) {
     // In case src0 is broadcasted into src1, it means that src0 has smaller
     // memory footprint and doing sum post-op or in-place will cause a crash.
     if (bcast_src0 && (prb->inplace || is_sum)) {
-        res->state = SKIPPED;
-        res->reason = skip_reason::invalid_case;
+        res->state = SKIPPED, res->reason = INVALID_CASE;
         return;
     }
 
     // See `skip_invalid_inplace` for details.
     if (prb->inplace) {
         if (is_sum) {
-            res->state = SKIPPED;
-            res->reason = skip_reason::invalid_case;
+            res->state = SKIPPED, res->reason = INVALID_CASE;
             return;
         }
 
